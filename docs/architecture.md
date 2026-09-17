@@ -40,7 +40,8 @@ Correlation: `chunk_id` in every SQS message, log line, and metric label. No dis
 ## 3. Scaling story (MVP — one queue, one scaler)
 
 - Unit of parallelism = **chunk**, not session. N sessions × 8s chunks → uniform queue depth on `dub-tasks`.
-- One KEDA `ScaledObject` on `ApproximateNumberOfMessages`: `queueLength: 5` (1 replica per 5 pending), `min: 1`, `max: 8`, `cooldownPeriod: 120`, `pollingInterval: 10`.
+- One KEDA `ScaledObject` on `ApproximateNumberOfMessages`: `queueLength: 5` (1 replica per 5 pending), `min: 1`, `max: 8`, `cooldownPeriod: 120`, `pollingInterval: 10`. Worker requests `100m/256Mi`, limits `500m/512Mi` — fits t3.micro; burst throttling is cosmetic.
+- Gateway runs **replicas: 1** (SQLite-on-PVC would split-brain past 1; HPA is future scope).
 - Scale-to-zero disabled for demo warmth.
 - The dashboard panel to watch: replica count overlaid with queue depth.
 
@@ -56,7 +57,7 @@ Provider helper (`providers.py`, inside the worker — not a separate service):
 
 ## 5. Observability story (MVP — 1 dashboard, 2 alerts, logs)
 
-- Metrics (`lingofy_` prefix, buckets `0.05–6.4`): `stage_duration_seconds{stage}` + `session_e2e_latency_seconds` histograms, `queue_depth`, `dlq_messages_total`, `fallback_total{provider}`, `cost_cents_total`, `drift_ms`.
+- Metrics (`lingofy_` prefix, buckets `0.05–6.4`): `stage_duration_seconds{stage}` + `session_e2e_latency_seconds` histograms (clock: enqueue → playable; upload in `upload_seconds`), `queue_depth`, `dlq_messages_total`, `fallback_total{provider}`, `cost_cents_total`, `drift_ms`. SQS gauges come from the worker's `GetQueueAttributes` poll — Prometheus cannot see SQS alone.
 - Logs: JSON lines with `chunk_id`, `seq`, `stage`, `provider`, `ms` — greppable without a trace backend.
 - One dashboard (`dashboard.json`), four panels: E2E p95 vs 3s, per-stage p50/p95, replicas vs queue depth, cost/min.
 - Two alerts only: SLOBurn (p95 > 3s for 5m), DLQNonEmpty (any ingress in 10m).

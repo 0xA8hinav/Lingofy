@@ -1,6 +1,6 @@
 # Lingofy — Technical Reference
 
-> Scope: this doc details the full design (per-stage services/queues, separate AI Gateway, full observability). The MVP build in `docs/plan.md` implements a subset — gateway(+chunker), one `dub-worker`, assembler, 1 work queue + DLQ, 1 dashboard, dumb fallback. `README.md` §15 and `docs/plan.md` §"What was cut" map the gap; §15 logs MVP simplifications.
+> Scope: this doc details the full design (per-stage services/queues, separate AI Gateway, full observability). The MVP build in `docs/plan.md` implements a subset — gateway(+chunker), one `dub-worker`, assembler, 1 work queue + DLQ, 1 dashboard, dumb fallback. Precedence: **plan.md wins for build**; this doc is design reference. `README.md` §15 and `docs/plan.md` §"What was cut" map the gap; §15 logs MVP simplifications.
 
 ---
 
@@ -12,18 +12,18 @@
 |---|---|
 | Tech | FastAPI (Python 3.12), uvicorn, websockets |
 | Port | 8080 |
-| Replicas | 2 (HPA on CPU 60%) |
+| Replicas | 1 (MVP — single replica avoids SQLite-on-PVC split-brain; HPA is future scope) |
 | Endpoints | see §2.2 |
-| Env | `AWS_REGION`, `S3_BUCKET_AUDIO`, `SQS_ASR_URL`, `JWT_SECRET`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| Env | `AWS_REGION`, `S3_BUCKET_AUDIO`, `SQS_DUB_URL`, `JWT_SECRET` (MVP; OTel exporter and OIDC→SSM wiring are future scope) |
 | Health | `GET /healthz` (liveness), `GET /readyz` (checks SQS + S3 reachability) |
-| Notes | Stateless. Sessions stored in DynamoDB-local-style table (`sessions`) — for dev, SQLite on a PVC; prod, DynamoDB or Postgres on the same node. |
+| Notes | MVP: single replica with SQLite on PVC (same interface later swappable to Postgres/DynamoDB). Do not scale past 1 on SQLite — status reads would 404 across PVCs. |
 
 ### 1.2 `slicer` — Chunker
 
 | Field | Value |
 |---|---|
 | Tech | Python + `ffmpeg` binary baked into image (`ffmpeg:6-alpine` base) |
-| Trigger | SQS `ingest-tasks` OR direct gRPC call from gateway (MVP: SQS) |
+| Trigger | Target: SQS `ingest-tasks` or direct call. MVP: plain function inside gateway, no queue (see `services/gateway/chunker.py`) |
 | Chunking | Target 8s. Smart split: run `ffmpeg -i in -af silencedetect=noise=-35dB:d=0.4 -f null -` to find silence points, snap chunk boundaries to nearest silence within ±1.5s; fall back to fixed `-f segment -segment_time 8` when no silence found |
 | Output | Per chunk: S3 object `s3://audio/{session_id}/{chunk_id}.wav` (16 kHz mono PCM WAV for ASR friendliness) + `ChunkCreated` message |
 | Manifest | Append record to session manifest in object store (last-write-wins with seq lock via conditional PUT) |
@@ -35,7 +35,7 @@ ffmpeg -i input.wav -vn -ac 1 -ar 16000 \
   chunk_%04d.wav
 ```
 
-### 1.3 `worker-asr`
+### 1.3 `worker-asr` (target — MVP folds into `dub-worker`)
 
 | Field | Value |
 |---|---|
@@ -45,7 +45,7 @@ ffmpeg -i input.wav -vn -ac 1 -ar 16000 \
 | Failure | visibility timeout 60s; maxReceiveCount 3 → DLQ |
 | Env | `DEEPGRAM_API_KEY` (via AI GW, not directly), `CHUNK_TIMEOUT_S=30` |
 
-### 1.4 `worker-translate`
+### 1.4 `worker-translate` (target — MVP folds into `dub-worker`)
 
 | Field | Value |
 |---|---|
@@ -55,7 +55,7 @@ ffmpeg -i input.wav -vn -ac 1 -ar 16000 \
 | Metering | Report `chars_billed` to AI GW response header → cost meter |
 | Env | `TARGET_LANGS` (default `es,hi`), `DEEPL_TIER=free` |
 
-### 1.5 `worker-tts`
+### 1.5 `worker-tts` (target — MVP folds into `dub-worker`, Piper baked into image, not sidecar)
 
 | Field | Value |
 |---|---|
@@ -65,7 +65,7 @@ ffmpeg -i input.wav -vn -ac 1 -ar 16000 \
 | Output | S3 `s3://audio/{session_id}/{lang}/{chunk_id}.mp3` + `SynthesisDone` → `assemble-tasks` |
 | Note | Piper voice per target language pinned in config: `es_ES-mls_1024-low`, `hi_IN-pratham-medium` |
 
-### 1.6 `ai-gateway`
+### 1.6 `ai-gateway` (target — MVP implements `providers.py` module inside `dub-worker`; extract to service when a second caller exists)
 
 A thin LiteLLM-proxy-style sidecar/service. Every provider call from every
 worker goes through it. See §4 for full spec — this is the heart of the
@@ -80,15 +80,15 @@ reliability story.
 | Output | S3 `s3://output/{session_id}/{lang}/playlist.m3u8`, `{session_id}/manifest.json` |
 | Edge | Missing chunk past deadline (session-level SLA of 90s) → mark manifest entry `unavailable` rather than blocking |
 
-### 1.8 Optional `ws-relay` (Go, stretch — weeks 9–10)
+### 1.8 Optional `ws-relay` (future scope — not in MVP; hardening/UI occupy weeks 9–10 in `plan.md`)
 
-| Field | Value |
-|---|---|
-| Tech | Go, stdlib `net/http` + `nhooyr.io/websocket` or `gorilla/websocket` |
-| Responsibility | Sustained binary frame fan-out with backpressure for live-mic ingest; speaks WS on one side, SQS/S3 on the other |
-| Contract | Same message envelope as §2.1; no provider creds; OTel Go SDK for `ws.relay` spans |
-| When to build | Only if live WS ingest is shaky under k6 load, or as a bounded polyglot bonus. Default v1 stays Python FastAPI WS. |
-| Rationale | Go's GC predictability and goroutine-per-connection model shine at high fan-out; at 20–50 sessions Python asyncio is sufficient. See `docs/architecture.md` §6. |
+| Field          | Value                                                                                                                                                           |
+| ----------------| -----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Tech           | Go, stdlib `net/http` + `nhooyr.io/websocket` or `gorilla/websocket`                                                                                            |
+| Responsibility | Sustained binary frame fan-out with backpressure for live-mic ingest; speaks WS on one side, SQS/S3 on the other                                                |
+| Contract       | Same message envelope as §2.1; no provider creds; OTel Go SDK for `ws.relay` spans                                                                              |
+| When to build  | Only if live WS ingest is shaky under k6 load, or as a bounded polyglot bonus. Default v1 stays Python FastAPI WS.                                              |
+| Rationale      | Go's GC predictability and goroutine-per-connection model shine at high fan-out; at 20–50 sessions Python asyncio is sufficient. See `docs/architecture.md` §6. |
 
 ## 2. Data contracts
 
@@ -128,7 +128,7 @@ Per-stage payloads ride in a `payload` object:
 | GET | `/v1/sessions/{id}/audio/{lang}/playlist.m3u8` | HLS playlist (proxied or 302 to S3) |
 | DELETE | `/v1/sessions/{id}` | Explicit purge (else TTL reaper after `ttl_hours`) |
 
-### 2.3 Queue design
+### 2.3 Queue design (target — MVP uses `dub-tasks` + `lingofy-dlq` only; same timeouts/retention)
 
 | Queue | Visibility timeout | maxReceiveCount | DLQ | Msg retention |
 |---|---|---|---|---|
@@ -141,10 +141,11 @@ Per-stage payloads ride in a `payload` object:
 
 Single shared DLQ keeps ops simple; message envelope's stage is recoverable
 from `payload`. **DLQ redrive** (console or `aws sqs start-message-move-task`)
-is the documented recovery path after a provider incident. Auto-redrive Job
-(triggered by Alertmanager webhook) is the week-9 hardening — see §9.
+is the documented recovery path after a provider incident. Future scope: auto-redrive Job on Alertmanager webhook — manual redrive in MVP (see plan.md "What was cut").
 
-## 3. Latency budget (implementation view)
+## 3. Latency budget (implementation view — target spans; MVP uses histograms + JSON logs with `chunk_id`)
+
+SLO clock (MVP): **enqueue → dubbed chunk playable.** Upload time is reported separately (`upload_seconds`) and excluded — a 5-min MP3 over slow Wi-Fi must not blow the SLO. Run the SLO demo on a pre-uploaded sample.
 
 | Stage | p50 target | p95 target | Instrumented as |
 |---|---|---|---|
@@ -156,7 +157,7 @@ is the documented recovery path after a provider incident. Auto-redrive Job
 | Assemble | 80 ms | 200 ms | span `assemble.chunk` |
 | **E2E** | **1.1 s** | **3.0 s** | `lingofy_session_e2e_latency_seconds` |
 
-## 4. AI Gateway spec
+## 4. AI Gateway spec (target — MVP implements the dumb subset in `providers.py`: 2 retries, 3-fails→fallback-60s, no half-open, no budget guard)
 
 ### 4.1 Behavior
 
@@ -195,13 +196,13 @@ spec:
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: worker-asr-scaler
+  name: dub-worker-scaler      # MVP: single worker, single queue
   namespace: lingofy
 spec:
   scaleTargetRef:
-    name: worker-asr
+    name: dub-worker
   minReplicaCount: 1
-  maxReplicaCount: 12
+  maxReplicaCount: 8
   cooldownPeriod: 120
   pollingInterval: 10
   triggers:
@@ -209,27 +210,24 @@ spec:
       authenticationRef:
         name: aws-sqs-auth
       metadata:
-        queueURL: https://sqs.ap-south-1.amazonaws.com/ACC/lingofy-asr-tasks
+        queueURL: https://sqs.ap-south-1.amazonaws.com/ACC/lingofy-dub-tasks
         queueLength: "5"        # 1 replica per 5 pending msgs
         awsRegion: "ap-south-1"
         identityOwner: operator
 ```
 
-Tuning notes:
-- `queueLength: 5` → a burst of 60 chunks spawns ~12 replicas.
+Tuning notes (MVP):
+- `queueLength: 5` → a burst of 40 chunks spawns ~8 replicas.
 - `cooldownPeriod: 120` prevents flapping during chunk inter-arrival gaps.
-- TTS worker `maxReplicaCount: 8` (Piper sidecar is CPU-bound; 8 × 250m fits
-  the t3.micro/node budget).
+- `dub-worker` `maxReplicaCount: 8`, requests `cpu: 100m, mem: 256Mi`, limits `cpu: 500m, mem: 512Mi` — 100m fits t3.micro (2 vCPU) alongside gateway/assembler/prometheus; expect cosmetic CPU throttling in the burst screenshot.
 - Scale-to-zero is disabled (`minReplicaCount: 1`) to keep the demo
   always-warm; document scale-to-zero as the production variant.
 
-Auto-remediation (week 9): Alertmanager `SLOBurn` webhook may temporarily raise
-`maxReplicaCount` via a remediation Job (bounded, reverted after cooldown).
-See §9.
+Future scope: auto scale-bump Job on SLOBurn webhook — manual tuning in MVP (see plan.md "What was cut").
 
 ## 6. Observability spec
 
-### 6.1 Tracing
+### 6.1 Tracing (target — MVP uses JSON logs with `chunk_id` + histograms, no OTel Collector/Tempo)
 
 - OTel SDK + FastAPI auto-instrumentation for HTTP; **manual spans** around
   queue send/receive and each provider call.
@@ -244,19 +242,19 @@ See §9.
 | `lingofy_ingest_chunks_total` | counter | `source` | chunk production rate |
 | `lingofy_stage_duration_seconds` | histogram | `stage`, `provider` | per-stage latency → p50/p95/p99 via `histogram_quantile()` |
 | `lingofy_stage_failures_total` | counter | `stage`, `error_class` (`429\|5xx\|timeout\|validation`) | stage success rate |
-| `lingofy_queue_depth` | gauge | `queue` | backlog visibility (also drives KEDA) |
+| `lingofy_queue_depth` | gauge | `queue` | backlog visibility (also drives KEDA). MVP source: worker calls `GetQueueAttributes` (both queues) every poll loop and exposes gauges — Prometheus cannot see SQS alone. |
 | `lingofy_queue_wait_seconds` | histogram | `queue` | enqueue→dequeue latency |
-| `lingofy_session_e2e_latency_seconds` | histogram | `session_type` | the SLO metric |
+| `lingofy_session_e2e_latency_seconds` | histogram | `session_type` | the SLO metric (MVP clock: enqueue → playable; upload tracked separately as `upload_seconds`) |
 | `lingofy_ai_tokens_billed_total` | counter | `provider`, `kind` (`chars\|audio_seconds`) | FinOps |
 | `lingofy_cost_cents_total` | counter | `tenant`, `service` | cost panels |
 | `lingofy_circuit_state` | gauge | `provider` | CB visual + alerts |
-| `lingofy_dlq_messages_total` | counter | `queue` | DLQ ingress alarm |
+| `lingofy_dlq_messages_total` | counter | `queue` | DLQ ingress alarm. MVP source: same `GetQueueAttributes` poll as `queue_depth`. |
 | `lingofy_drift_ms` | histogram | `lang` | timeline drift vs source |
 
 Histogram bucket guidance: latency buckets `0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 6.4`
 — bounded by the 3s SLO so p95 lands inside a real bucket.
 
-### 6.3 Dashboards (Grafana, provisioned as JSON in `deploy/observability/`)
+### 6.3 Dashboards (target: 4 below. MVP ships one `dashboard.json` with four panels covering the same questions.)
 
 1. **SLO Overview** — E2E p95 vs 3s line, error-budget burn (gauge), stage
    waterfall, chunk throughput.
@@ -267,7 +265,7 @@ Histogram bucket guidance: latency buckets `0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 
 4. **FinOps** — cost/min-of-audio, chars billed per tenant, budget remaining,
    fallback-vs-primary cost delta.
 
-### 6.4 Alerts (Alertmanager rules)
+### 6.4 Alerts (target table — MVP ships SLOBurn + DLQNonEmpty only)
 
 | Alert | Expr | For | Severity |
 |---|---|---|---|
@@ -277,58 +275,50 @@ Histogram bucket guidance: latency buckets `0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 
 | CircuitOpen | `max_over_time(lingofy_circuit_state[5m]) >= 2` | 5m | warn |
 | CostAnomaly | `rate(lingofy_cost_cents_total[1h]) > 3 * avg_over_time(rate(lingofy_cost_cents_total[1h])[7d:1h])` | 30m | ticket |
 
-Week-9 hardening wires `SLOBurn` → auto-scale bump Job, `DLQNonEmpty` →
-auto-redrive Job (post-recovery), `CircuitOpen` → fallback-verification Job.
-Manual runbook remains the fallback.
+Future scope: `SLOBurn` → auto-scale bump Job, `DLQNonEmpty` →
+auto-redrive Job, `CircuitOpen` → fallback-verification Job.
+Manual runbook is the MVP path.
 
 ## 7. Deployment topology
 
 - **Cluster**: k3s single node (k3d in dev; t3.micro free tier in "prod").
 - **Namespaces**: `lingofy` (app), `observability`, `infra` (localstack in dev).
-- **Resource requests/limits** (worker-asr example): requests `cpu: 150m, mem: 256Mi`, limits `cpu: 500m, mem: 512Mi`.
-- **IaC**: Terraform for AWS-side only — S3 buckets, 6 SQS queues + DLQ redrive policy, ECR repos, IAM roles (least privilege per service, one role per worker).
+- **Resource requests/limits** (MVP `dub-worker`): requests `cpu: 100m, mem: 256Mi`, limits `cpu: 500m, mem: 512Mi` — fits t3.micro (2 vCPU) with gateway/assembler/observability; throttling in burst is cosmetic, note it on the demo graph.
+- **IaC**: Terraform for AWS-side only — S3 buckets, MVP 2 SQS queues + DLQ redrive policy (target: 6), ECR repos, IAM roles (least privilege per service).
 - **Helm**: umbrella chart `lingofy` with subcharts per service; values split `values-dev.yaml` / `values-demo.yaml`.
-- **GitOps (week 7+, demo week required)**: ArgoCD `Application` watching the repo (`deploy/helm/lingofy` + values overlay); `helm upgrade` in CD is replaced by `argocd app sync`. See `deploy/argocd/`.
-- **Secrets**: Kubernetes Secrets sourced from GitHub Actions OIDC → SSM at deploy time; never in git. Deepgram/DeepL/ElevenLabs keys injected into AI GW only — workers hold no provider creds (defense in depth).
+- **GitOps (stretch, week 10, only if green by Wednesday)**: ArgoCD `Application` watching the repo; `helm upgrade` stays the MVP deploy path. See `deploy/argocd/` (created only in stretch).
+- **Secrets (MVP)**: dev keys via gitignored `.env`, demo keys via plain K8s Secret; never in git. Full OIDC→SSM wiring is future scope. Keys are read only by the worker's provider helper (no separate AI GW service in MVP).
 
 ## 8. CI/CD (GitHub Actions)
 
 `ci.yaml` — on PR:
 1. `ruff lint` + `mypy` per service
-2. `pytest` unit (min 80% lines on services/)
-3. `docker build` per changed service
-4. `trivy image --severity CRITICAL,HIGH --exit-code 1`
-5. `cosign sign` (keyless, OIDC) — verify in CD before deploy
+2. `pytest` unit (min 70% lines on services/ for MVP pace)
+3. `docker build` per changed service (3 MVP images)
+4. `trivy image --severity CRITICAL,HIGH --exit-code 1` (enforced gate)
+5. Optional 30-min attempt: `cosign sign` (keyless, OIDC) — keep if trivial, drop with a one-line note if it fights; Trivy stays regardless.
 6. `kind` up → `helm template | kubectl apply --dry-run=server` → smoke test
    (publish 1-min sample, assert manifest ready within 120s)
 7. Merge queue blocks on smoke-test failure.
 
 `cd.yaml` — on main:
 1. Push images to ECR tagged `git-sha`
-2. `cosign verify` gate, then deploy to demo cluster: GitOps path = push chart version bump → ArgoCD syncs; fallback = `helm upgrade --install` via self-hosted runner
-3. Post-deploy: run `tests/integration/` against the live cluster; auto-rollback
-   (`helm rollback` / `argocd app rollback`) on failure.
+2. Deploy via `helm upgrade --install` (MVP path; ArgoCD sync only in stretch) then run `tests/integration/`; auto-rollback (`helm rollback`) on failure. Optional `cosign verify` gate only if signing was kept.
 
-`chaos-nightly.yaml` — scheduled:
-- k6 load 30 min at 20 concurrent sessions
-- worker-kill chaos + provider-fault chaos (tc netem on AI GW egress)
-- assert: zero DLQ growth, SLO p95 < 3s for the run, cost meter coherent.
+No nightly chaos workflow in MVP — chaos is `scripts/chaos/kill-worker.sh` + `block-provider.sh`, run manually.
 
 ## 9. Failure modes & runbook (excerpt)
 
-| Failure | Detection | Automated response | Manual follow-up |
-|---|---|---|---|
-| Provider 429 (quota) | `error_class=429` spike | GW rate-limiter absorbs; SQS retry backoff spreads load | raise quota / shift to fallback |
-| Provider 5xx storm | CB opens | traffic → fallback provider; alert `CircuitOpen` | redrive DLQ after incident, reconcile cost meter |
-| Worker OOM | pod restarts metric | K8s restarts; chunk redelivered after visibility timeout | bump limits if recurring |
-| Poison chunk (corrupt audio) | 3 deliveries → DLQ | DLQ ingress alert | inspect, fix slicer, redrive |
-| S3 upload partial | assembler gap detection | session marked degraded, missing chunk flagged | re-run slicer for session |
-| Whole-node loss | nodes-down alert | redeploy `helm upgrade` from CI (GitOps recovery) | document RTO ≈ 8 min in runbook |
+| Failure                      | Detection               | Automated response                                       | Manual follow-up                                 |
+| ------------------------------| -------------------------| ----------------------------------------------------------| --------------------------------------------------|
+| Provider 429 (quota)         | `error_class=429` spike | GW rate-limiter absorbs; SQS retry backoff spreads load  | raise quota / shift to fallback                  |
+| Provider 5xx storm           | CB opens                | traffic → fallback provider; alert `CircuitOpen`         | redrive DLQ after incident, reconcile cost meter |
+| Worker OOM                   | pod restarts metric     | K8s restarts; chunk redelivered after visibility timeout | bump limits if recurring                         |
+| Poison chunk (corrupt audio) | 3 deliveries → DLQ      | DLQ ingress alert                                        | inspect, fix slicer, redrive                     |
+| S3 upload partial            | assembler gap detection | session marked degraded, missing chunk flagged           | re-run slicer for session                        |
+| Whole-node loss              | nodes-down alert        | redeploy `helm upgrade` from CI (GitOps recovery)        | document RTO ≈ 8 min in runbook                  |
 
-Auto-remediation Jobs (week 9, all bounded + audited):
-- `job/remediate-scale-bump` — on `SLOBurn`: patch KEDA ScaledObject maxReplicas +50% for 15 min.
-- `job/remediate-dlq-redrive` — on `DLQNonEmpty` after provider recovery (CB closed for 5 min): `start-message-move-task`.
-- `job/remediate-fallback-verify` — on `CircuitOpen`: synthesize 1 canary chunk via fallback, publish event.
+Future scope (not MVP): bounded remediation Jobs — `remediate-scale-bump`, `remediate-dlq-redrive` (post-recovery), `remediate-fallback-verify`. MVP uses manual redrive + runbook (see plan.md "What was cut").
 
 ## 10. Test strategy
 
@@ -337,10 +327,10 @@ Auto-remediation Jobs (week 9, all bounded + audited):
 | Unit | pytest | chunker boundaries, manifest contiguity, backoff jitter bounds, price-table math |
 | Contract | pytest + localstack | message envelope schema; every queue round-trips |
 | Integration | pytest against kind | happy path: 1-min clip → 2 languages manifest in < 120s |
-| Load | k6 | 50 sessions × 3-min audio; assert SLO p95, KEDA 1→12 scaling event captured |
-| Chaos | bash + kubectl + tc | worker kill, provider blackout, node drain |
+| Load | k6 | 20 steady / 40 burst sessions × short audio; assert SLO p95, KEDA 1→8 scaling event captured (t3.micro cap documented) |
+| Chaos | bash + kubectl (`kill-worker.sh`, `block-provider.sh`) | worker kill, provider blackout, node drain (manual) |
 | Cost | pytest | price table × fixture usage = expected cents (golden files) |
-| Security | trivy + cosign verify | no CRITICAL/HIGH vulns; images signed |
+| Security | trivy (enforced); cosign verify only if signing kept | no CRITICAL/HIGH vulns |
 
 ## 11. Cost model (detail)
 
@@ -366,10 +356,12 @@ Piper. **Total ≈ $0.00–0.80 depending on route.**
 (one t3.micro + ECR) · demo week +$12 optional EKS · **total ≤ $50, $50+
 buffer**. AWS Budgets alerts at $40/$70.
 
-## 12. Work breakdown → seed for `plan.md`
+## 12. Work breakdown (superseded)
 
-> Each milestone has: owner (A=Aarav, B=Abhinav, C=Anshuman), duration,
-> deliverables, acceptance criteria (AC).
+> **Superseded by `docs/plan.md`.** The table below is kept only as the historical target-design breakdown — do not build from it. MVP scope, dates, owners, and acceptance criteria live in `plan.md` (3 services, 1 work queue, 1 dashboard, dumb fallback).
+
+<details>
+<summary>Historical target-design breakdown (not current)</summary>
 
 | Wk | Milestone | Owner | Deliverables | Acceptance criteria |
 |---|---|---|---|---|
@@ -386,12 +378,11 @@ buffer**. AWS Budgets alerts at $40/$70.
 | 11 | Web UI + load/chaos polish (+ optional Go ws-relay) | C (+B) | uploader, live player, status page | 50-session load: SLO p95 < 3s, zero DLQ |
 | 12 | Demo week: EKS burst (optional), freeze, rehearsal | all | demo script, video backup, README final | 5 (+1 self-healing) demo scenarios pass live, twice |
 
-**Risk register (top 3)**: (1) Deepgram free-credit exhaustion mid-semester →
-mitigation: Piper-style local whisper.cpp evaluated in wk 9; (2) t3.micro CPU
-saturation under load tests → mitigation: cap load at 20 sessions, scale-up
-demo recorded at lower concurrency; (3) ElevenLabs free-tier exhaustion →
-mitigation: Piper is default in `values-dev`, ElevenLabs only for showcase
-clips.
+</details>
+
+**Risk register (target, historical)**: (1) Deepgram free-credit exhaustion →
+whisper.cpp evaluated in wk 9; (2) t3.micro saturation → cap at 20 sessions; (3) ElevenLabs exhaustion →
+Piper default in `values-dev`. Current risks live in `plan.md`.
 
 ## 13. Out of scope (v1)
 
@@ -418,4 +409,8 @@ SLO), multi-region.
 | 2026-09-18 | 8s chunks over 2s/30s | B | balances API overhead vs latency floor |
 | 2026-09-18 | Piper as TTS fallback | B | unlimited free TTS; resilience demo |
 | 2026-09-18 | Python mono-stack for v1; Go only as optional ws-relay | B | one base image/linter/test runner; SLO is provider-bound |
-| 2026-09-18 | ArgoCD GitOps + auto-remediation Jobs + cosign | A | declarative deploys, closed alert→action loop, supply-chain signing; ~1 week cost |
+| 2026-09-18 | ArgoCD GitOps + auto-remediation Jobs + cosign (target) | A | declarative deploys, closed alert→action loop, supply-chain signing; ~1 week cost |
+| 2026-09-18 | MVP cut: single `dub-worker` + 1 work queue (ADR-8) | all | 3 deployments replace 7; stage timers keep histogram data |
+| 2026-09-18 | MVP cut: dashboards 5 alerts→1 dashboard 2 alerts; OTel→logs+histograms | C+B | one screen tells the demo story; traces deferred |
+| 2026-09-18 | MVP cut: remediation Jobs cut, manual redrive; cosign attempt-only | A | alert → runbook is the MVP path; Trivy enforced |
+| 2026-09-18 | MVP cut: ArgoCD→stretch wk10; Go relay→future; pytest 80%→70% | all | `helm upgrade` is the MVP deploy; buffer preserved |

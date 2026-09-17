@@ -14,14 +14,14 @@ MVP (this plan): gateway(+slicer inside) → dub-tasks queue → dub-worker (ASR
                        → S3 → assembler → HLS   +  retry helper + dumb fallback + 1 dashboard + 2 alerts
 ```
 
-**The only six things that make it a DevOps project (plus one resilience demo):**
+**The six things that make it a DevOps project, plus one resilience demo:**
 1. Containerized services (Docker, 3 images)
 2. CI/CD — GitHub Actions: test → build → scan → deploy
 3. Small IaC — Terraform for SQS/S3/ECR (~200 lines)
 4. Orchestration — k3s + Helm
 5. Autoscaling — KEDA on **one** queue, shown under load
 6. Observability with **one SLO** — Prometheus + Grafana, one dashboard, one latency panel
-7. Plus: retries + Piper fallback, shown live by killing the primary provider
+7. Plus one: retries + Piper fallback, shown live by killing the primary provider
 
 **One-sentence test for every feature:** *"Does this appear in one of my five demo moments?"* If no → docs-only / future work. Per-stage histograms stay (SLO panel needs them). Half-open breaker probing, trace waterfalls, second/third dashboards, remediation controller → cut.
 
@@ -31,7 +31,7 @@ MVP (this plan): gateway(+slicer inside) → dub-tasks queue → dub-worker (ASR
 
 ## Global Constraints (MVP)
 
-- p95 E2E chunk latency < 3.0s (`lingofy_session_e2e_latency_seconds`); one SLO alert if breached 5 min.
+- p95 latency < 3.0s on clock **enqueue → dubbed chunk playable** (`lingofy_session_e2e_latency_seconds`); upload time tracked separately as `upload_seconds` and excluded. SLO demo runs on a pre-uploaded sample. One SLO alert if breached 5 min.
 - Drift ≤ 250 ms; DLQ must stay drainable (second alert on any DLQ ingress).
 - Spend ≤ $50; Piper is default voice so paid TTS is opt-in per clip.
 - Python mono-stack, one base `python:3.12-slim`, `ruff + pytest`; `pytest` ≥ 70% on `services/` (80% was overkill for the timeline).
@@ -107,7 +107,7 @@ Status: `pending`.
 **Why:** Demo moment 1 (dubbed audio plays) starts here; the worker (T3) needs session IDs, S3 keys, and the envelope frozen.
 
 **Build:**
-- `services/gateway/app.py`: `POST /v1/sessions`, `POST /{id}/audio`, `WS /{id}/stream` (skeleton), `GET /{id}/status`, `GET /{id}/manifest`, `/healthz`, `/readyz` (SQS+S3 ping). Session store: SQLite on PVC (same interface later swappable to DynamoDB).
+- `services/gateway/app.py`: `POST /v1/sessions`, `POST /{id}/audio`, `WS /{id}/stream` (skeleton), `GET /{id}/status`, `GET /{id}/manifest`, `/healthz`, `/readyz` (SQS+S3 ping). Session store: SQLite on PVC with **replicas: 1** (same interface later swappable to Postgres; never scale past 1 on SQLite or status reads 404 across PVCs).
 - `services/gateway/chunker.py`: `silencedetect=noise=-35dB:d=0.4`, snap boundaries ±1.5s, else fixed `-f segment -segment_time 8`. Runs as function call after upload (no separate deployment/queue).
 
 **Verify:**
@@ -168,12 +168,12 @@ Status: `pending`. Depends on: T4.
 
 ### Task 6: Helm + KEDA on one queue + load burst (Wk 6 — A)
 
-**Outcome:** `helm upgrade` deploys all 3 services; k6 burst grows `dub-worker` 1→8 on backlog and drains back. This is demo moments 3 and 5 (scale + green pipeline).
+**Outcome:** `helm upgrade` deploys all 3 services; k6 burst grows `dub-worker` 1→8 on backlog and drains back. This is demo moment 3 (scale).
 
 **Why:** The elastic-pipeline claim with the smallest moving part: one ScaledObject, one queue.
 
 **Build:**
-- `deploy/helm/lingofy/` (umbrella + 3 subcharts, `values-dev.yaml`/`values-demo.yaml`), `deploy/keda/`: one `TriggerAuthentication` + one `ScaledObject` (`queueLength: 5`, min 1 max 8, cooldown 120, poll 10).
+- `deploy/helm/lingofy/` (umbrella + 3 subcharts, `values-dev.yaml`/`values-demo.yaml`), `deploy/keda/`: one `TriggerAuthentication` + one `ScaledObject` (`queueLength: 5`, min 1 max 8, cooldown 120, poll 10). Worker requests `100m/256Mi`, limits `500m/512Mi` — fits t3.micro (2 vCPU); throttling in the burst screenshot is cosmetic, note it on the graph.
 - `tests/load/k6-burst.js` + `scripts/load.sh`: ramp to 30–50 concurrent sessions of short audio (cap steady-state at 20 on t3.micro if CPU saturates — document the cap).
 
 **Verify:**
@@ -189,7 +189,7 @@ Status: `pending`. Depends on: T1–T5.
 **Why:** Demo moment 2 (latency holds on Grafana). One good dashboard beats four half-filled ones; per-stage histograms give the waterfall without tracing infra.
 
 **Build:**
-- Metrics in worker/gateway: `stage_duration_seconds{stage}` + `session_e2e_latency_seconds` histograms, `queue_depth`, `dlq_messages_total`, `fallback_total{provider}`, `cost_cents_total`.
+- Metrics in worker/gateway: `stage_duration_seconds{stage}` + `session_e2e_latency_seconds` histograms, `queue_depth`, `dlq_messages_total`, `fallback_total{provider}`, `cost_cents_total`. SQS gauge source: worker calls `GetQueueAttributes` on both queues every poll loop and exposes the numbers — Prometheus cannot see SQS alone (prevents a week-7 stall).
 - `deploy/observability/dashboard.json` — **one** dashboard, four panels: E2E p95 vs 3s line, per-stage p50/p95 (from histograms), replicas vs queue depth, cost/min.
 - `deploy/observability/alerts.yaml` — **two** alerts only: SLOBurn (p95>3s 5m), DLQNonEmpty (any ingress 10m). Structured JSON logs with `chunk_id` everywhere.
 
@@ -239,7 +239,7 @@ Status: `pending`. Depends on: T1–T8.
 **Why:** Demo moment 1 needs a friendly surface. ArgoCD is explicitly stretch — `helm upgrade` in CI is defensible, ArgoCD only if week 10 is green by Wednesday.
 
 **Build:**
-- `services/gateway/static/`: uploader, language picker, status view (`GET /status`), per-language HLS `<audio>` player.
+- `services/gateway/static/`: uploader, language picker, status view (`GET /status`), per-language HLS player via **hls.js** (native HLS is Safari-only — include the library or playback fails outside Safari).
 - Stretch only: `deploy/argocd/Application.yaml` watching `deploy/helm/lingofy`; `argocd app sync` replaces `helm upgrade`. Timebox: 2 days, revert to Helm on friction.
 
 **Verify:**
@@ -304,8 +304,8 @@ Status: `pending`. Depends on: T11.
 
 ## Demo script (10 minutes, five moments)
 
-1. **Play** — upload 5-min EN → ES+HI via UI; first dubbed chunk plays < 3s, rest streams. (Shows: pipeline works.)
-2. **Hold SLO** — Grafana: E2E p95 vs 3s + per-stage bars. (Shows: numbers, not claims.)
+1. **Play** — upload 5-min EN → ES+HI via UI (pre-upload before timing); first dubbed chunk plays < 3s on the enqueue→playable clock, rest streams. (Shows: pipeline works.)
+2. **Hold SLO** — Grafana: E2E p95 vs 3s + per-stage bars, measured on the pre-uploaded sample so college Wi-Fi upload time never enters the SLO. (Shows: numbers, not claims.)
 3. **Scale** — k6 burst; replicas 1→8 on queue depth, drain back. (Shows: elasticity.)
 4. **Kill provider** — block ElevenLabs; fallback counter rises, audio continues via Piper. (Shows: resilience.)
 5. **Stay green** — `kubectl delete pod` mid-stream → redelivery, complete manifest, empty DLQ + cost panel paid-vs-fallback. (Shows: operability + cost control.)

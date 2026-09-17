@@ -81,16 +81,16 @@ See `docs/architecture.md` for the layered view and `docs/TECHNICAL_REFERENCE.md
 
 ## 3. Components (MVP — 3 images)
 
-| Component | Tech | Responsibility | Scales via |
-|---|---|---|---|
-| **Gateway** | FastAPI + ffmpeg + Python | Sessions, upload ingest, 8s silence-snapped chunking, status/manifest | HPA on CPU (2 replicas) |
-| **Dub-Worker** | Python + Deepgram/DeepL/ElevenLabs SDKs + Piper baked in | One chunk in → ASR → Translate (1→N langs) → TTS sequentially, with stage timers | KEDA on `dub-tasks` depth (`queueLength: 5`, min 1 max 8) |
-| **Assembler** | Python + ffmpeg | Reorder by `seq`, `atempo` align, emit HLS playlists + manifest | HPA on CPU (1–2 pods) |
-| **Provider helper** | `providers.py` inside worker (not a separate service) | 2 retries w/ jitter, dumb breaker (3 fails → fallback 60s), `chars_billed` reporting | — |
-| **Queues** | SQS ×2 | `dub-tasks` (visibility 60s, maxReceive 3) + `lingofy-dlq` (manual redrive) | managed |
-| **Object store** | S3 | Chunk WAVs, per-language MP3s, playlists, manifests | managed |
-| **Observability** | Prometheus, Grafana, Alertmanager | One dashboard (SLO + stages + scaling + cost), two alerts (SLOBurn, DLQNonEmpty), JSON logs with `chunk_id` | static |
-| **Cost counter** | Prometheus counter in worker | `cost_cents_total` from `prices.yaml` → one cost panel | in-worker |
+| Component           | Tech                                                     | Responsibility                                                                                              | Scales via                                                |
+| ---------------------| ----------------------------------------------------------| -------------------------------------------------------------------------------------------------------------| -----------------------------------------------------------|
+| **Gateway**         | FastAPI + ffmpeg + Python                                | Sessions, upload ingest, 8s silence-snapped chunking, status/manifest                                       | 1 replica (MVP — avoids SQLite split-brain; HPA is future scope) |
+| **Dub-Worker**      | Python + Deepgram/DeepL/ElevenLabs SDKs + Piper baked in | One chunk in → ASR → Translate (1→N langs) → TTS sequentially, with stage timers                            | KEDA on `dub-tasks` depth (`queueLength: 5`, min 1 max 8) |
+| **Assembler**       | Python + ffmpeg                                          | Reorder by `seq`, `atempo` align, emit HLS playlists + manifest                                             | HPA on CPU (1–2 pods)                                     |
+| **Provider helper** | `providers.py` inside worker (not a separate service)    | 2 retries w/ jitter, dumb breaker (3 fails → fallback 60s), `chars_billed` reporting                        | —                                                         |
+| **Queues**          | SQS ×2                                                   | `dub-tasks` (visibility 60s, maxReceive 3) + `lingofy-dlq` (manual redrive)                                 | managed                                                   |
+| **Object store**    | S3                                                       | Chunk WAVs, per-language MP3s, playlists, manifests                                                         | managed                                                   |
+| **Observability**   | Prometheus, Grafana, Alertmanager                        | One dashboard (SLO + stages + scaling + cost), two alerts (SLOBurn, DLQNonEmpty), JSON logs with `chunk_id` | static                                                    |
+| **Cost counter**    | Prometheus counter in worker                             | `cost_cents_total` from `prices.yaml` → one cost panel                                                      | in-worker                                                 |
 
 ## 4. End-to-end data flow (MVP)
 
@@ -102,7 +102,9 @@ See `docs/architecture.md` for the layered view and `docs/TECHNICAL_REFERENCE.md
 
 Correlation key is `chunk_id` in every log line and metric label.
 
-## 5. Latency budget (p95 = 3.0 s)
+## 5. Latency budget (p95 = 3.0 s, clock: enqueue → playable)
+
+SLO clock: **enqueue → dubbed chunk playable.** Upload time is excluded and reported separately as `upload_seconds` — a 5-min MP3 over slow Wi-Fi must not blow the SLO. Run the SLO demo on a pre-uploaded sample.
 
 | Stage | Budget | Notes |
 |---|---|---|
@@ -134,7 +136,7 @@ Language choice: **Python 3.12 mono-stack** (one base image, `ruff + pytest`, fi
 
 | SLO | Target | Measured by |
 |---|---|---|
-| End-to-end chunk latency | p95 < 3 s | `lingofy_session_e2e_latency_seconds` → alert SLOBurn |
+| End-to-end chunk latency (enqueue → dubbed chunk playable; upload excluded) | p95 < 3 s | `lingofy_session_e2e_latency_seconds` → alert SLOBurn |
 | Pipeline completeness | DLQ stays empty | `lingofy_dlq_messages_total` → alert DLQNonEmpty |
 | Timeline drift | ≤ 250 ms | `lingofy_drift_ms` (panel, no page) |
 | Cost per minute of audio | reported | `lingofy_cost_cents_total` (panel, no page) |
