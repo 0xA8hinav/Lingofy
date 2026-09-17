@@ -1,8 +1,6 @@
 # Lingofy — Technical Reference
 
-This document is the single source of truth for implementation details.
-`plan.md` is derived from §12 (Work Breakdown). Anything not specified here is
-a decision the implementer makes and records in §15 (Decision Log).
+> Scope: this doc details the full design (per-stage services/queues, separate AI Gateway, full observability). The MVP build in `docs/plan.md` implements a subset — gateway(+chunker), one `dub-worker`, assembler, 1 work queue + DLQ, 1 dashboard, dumb fallback. `README.md` §15 and `docs/plan.md` §"What was cut" map the gap; §15 logs MVP simplifications.
 
 ---
 
