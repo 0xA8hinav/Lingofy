@@ -15,6 +15,14 @@ def cost_cents(chars: int, provider: str) -> float:
 
 
 def translate(text: str, source_lang: str, target_lang: str) -> dict:
+    try:
+        import argostranslate.translate as T
+
+        out = T.translate(text, source_lang, target_lang)
+        if out:
+            return {"target_text": out, "chars_billed": len(text)}
+    except Exception:
+        pass
     return {"target_text": f"[{target_lang}] {text}", "chars_billed": len(text)}
 
 
