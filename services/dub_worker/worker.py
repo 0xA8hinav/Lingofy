@@ -14,21 +14,18 @@ def transcribe_chirp(wav_path: str, source_lang: str, max_speakers: int = 3) -> 
     from google.cloud import speech_v2 as speech
 
     project = os.environ["GOOGLE_CLOUD_PROJECT"]
-    region = os.getenv("GOOGLE_CLOUD_REGION", "us-central1")
+    region = os.getenv("GOOGLE_CLOUD_REGION", "us")
     client = speech.SpeechClient(
         client_options={"api_endpoint": f"{region}-speech.googleapis.com"}
     )
-    lang = "hi-IN" if source_lang.startswith("hi") else "en-IN"
+    primary = "hi-IN" if source_lang.startswith("hi") else "en-IN"
     config = speech.RecognitionConfig(
-        auto_decoding_config=speech.AutoDecodingConfig(),
-        language_codes=[lang],
-        alternative_language_codes=["en-IN", "hi-IN"] if lang == "hi-IN" else ["hi-IN", "en-IN"],
-        model="chirp_2",
+        auto_decoding_config=speech.AutoDetectDecodingConfig(),
+        language_codes=[primary],
+        model="chirp_3",
         features=speech.RecognitionFeatures(
             enable_word_time_offsets=True,
-            diarization_config=speech.SpeakerDiarizationConfig(
-                min_speaker_count=1, max_speaker_count=max_speakers
-            ),
+            diarization_config=speech.SpeakerDiarizationConfig(),
         ),
     )
     with open(wav_path, "rb") as f:
@@ -52,12 +49,17 @@ def transcribe_chirp(wav_path: str, source_lang: str, max_speakers: int = 3) -> 
     text = " ".join(text_parts).strip()
     if not text:
         raise ValueError("empty chirp transcript")
-    top = max(votes, key=votes.get) if votes else "1"
+    top = max(votes, key=votes.get) if votes else "0"
+    # chirp tags are 0-based; our voice map is 1-based
+    label = str(int(top) + 1) if str(top).isdigit() else str(top)
+    for w in words:
+        if str(w["speaker"]).isdigit():
+            w["speaker"] = str(int(w["speaker"]) + 1)
     return {
         "text": text,
         "confidence": 0.95,
         "provider": "chirp",
-        "speaker_label": top,
+        "speaker_label": label,
         "words": words,
     }
 
