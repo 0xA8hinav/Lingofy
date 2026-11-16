@@ -39,7 +39,8 @@ def transcribe_chirp(wav_path: str, source_lang: str, max_speakers: int = 3) -> 
         content=content,
     )
     resp = client.recognize(request=request)
-    words, votes: list = [], {}
+    words: list = []
+    votes: dict = {}
     text_parts = []
     for r in resp.results:
         alt = r.alternatives[0]
