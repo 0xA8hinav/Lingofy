@@ -75,17 +75,23 @@ def _run_dub(sid: str):
         chunks = chunk_video_to_wav(str(srcs[0]), str(AUDIO / sid), sid)
         SESSIONS[sid]["chunks_total"] = len(chunks)
         from services.assembler.assemble import assemble_session
+        from services.dub_worker.diarize import label_session
         from services.dub_worker.voices import synthesize, translate
         from services.dub_worker.worker import transcribe
 
         dubbed = Path("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
+        try:
+            spk = label_session([c["wav_path"] for c in chunks])
+        except Exception:
+            spk = {}
 
         def _one(c):
             try:
+                label = spk.get(c["wav_path"], "1")
                 tx = transcribe(c["wav_path"], s["source_lang"])["text"]
                 tt = translate(tx, s["source_lang"], s["target_lang"])["target_text"]
-                synthesize(tt, s["target_lang"], "1", str(dubbed), name=f"{c['seq']:04d}_1")
+                synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{c['seq']:04d}_{label}")
             except Exception:
                 pass
             return c["seq"]
