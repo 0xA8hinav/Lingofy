@@ -70,6 +70,12 @@ def _run_dub(sid: str):
             except Exception:
                 pass
             SESSIONS[sid]["chunks_done"] = i + 1
+            if (i + 1) % 4 == 0:
+                try:
+                    assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid), chunks_total=len(chunks), src_video=str(srcs[0]), preview=True)
+                    SESSIONS[sid]["preview_url"] = f"/output/{sid}/preview_{s['target_lang']}.mp4"
+                except Exception:
+                    pass
         assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid), chunks_total=len(chunks), src_video=str(srcs[0]))
         SESSIONS[sid]["video_url"] = f"/output/{sid}/dubbed_{s['target_lang']}.mp4"
         SESSIONS[sid]["elapsed_s"] = round(time.time() - t0, 1)
@@ -146,6 +152,7 @@ def status(sid: str):
         "chunks_total": s["chunks_total"],
         "chunks_done": s.get("chunks_done", 0),
         "video_url": s.get("video_url"),
+        "preview_url": s.get("preview_url"),
         "elapsed_s": s.get("elapsed_s"),
         "error": s.get("error"),
     }

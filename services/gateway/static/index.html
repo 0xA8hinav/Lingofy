@@ -26,12 +26,14 @@ async function poll(){
   const st=await (await fetch('/v1/sessions/'+sid+'/status')).json();
   const pct=st.chunks_total?Math.round(100*st.chunks_done/st.chunks_total):0;
   document.getElementById('fill').style.width=pct+'%';
-  document.getElementById('st').textContent=`${st.chunks_done}/${st.chunks_total} (${pct}%)`+(st.elapsed_s?` — done in ${st.elapsed_s}s`:'');
+  document.getElementById('st').textContent=`${st.chunks_done}/${st.chunks_total} (${pct}%) — rendering, keep this tab open`+(st.elapsed_s?` — done in ${st.elapsed_s}s`:'');
   if(st.error){document.getElementById('st').textContent='error: '+st.error;clearInterval(timer);return;}
+  const v=document.getElementById('v');
+  if(st.preview_url && !v.src){v.src=st.preview_url+'?t='+Date.now();}
   if(st.video_url&&(st.chunks_done>=st.chunks_total&&st.chunks_total>0)){
     clearInterval(timer);
     const m=await (await fetch('/v1/sessions/'+sid+'/manifest')).json();
-    document.getElementById('v').src=m.video_url;
+    v.src=m.video_url+'?t='+Date.now(); v.play().catch(()=>{});
     document.getElementById('m').textContent=JSON.stringify(m,null,2);
   }
 }

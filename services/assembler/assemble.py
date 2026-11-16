@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 
-def assemble_session(session_id: str, target_lang: str, dubbed_dir: str = "", out_dir: str = "", chunks_total: int | None = None, src_video: str = "") -> dict:
+def assemble_session(session_id: str, target_lang: str, dubbed_dir: str = "", out_dir: str = "", chunks_total: int | None = None, src_video: str = "", preview: bool = False) -> dict:
     import shutil
     import subprocess
 
@@ -14,7 +14,8 @@ def assemble_session(session_id: str, target_lang: str, dubbed_dir: str = "", ou
     mp3s = wavs or (sorted(dubbed.glob("*.mp3")) if dubbed.exists() else [])
     total = chunks_total if chunks_total is not None else max(1, len(mp3s))
     done = len(mp3s)
-    video_path = out / f"dubbed_{target_lang}.mp4"
+    name = f"preview_{target_lang}.mp4" if preview else f"dubbed_{target_lang}.mp4"
+    video_path = out / name
     if src_video and Path(src_video).exists() and shutil.which("ffmpeg") and mp3s:
         lst = out / "concat.txt"
         lst.write_text("".join(f"file '{p.resolve()}'\n" for p in mp3s))
