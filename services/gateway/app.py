@@ -56,72 +56,55 @@ def create_session(body: dict):
 
 
 def _run_dub(sid: str):
-    import time
+    """Legacy full-dub path (kept for scripts/demo.py offline runs)."""
+    return
 
-    from scripts.demo import run_demo
 
-    s = SESSIONS.get(sid)
-    if not s:
-        return
-    srcs = sorted((DATA / "uploads").glob(f"{sid}_*"))
-    if not srcs:
-        return
-    t0 = time.time()
-    try:
-        from concurrent.futures import ThreadPoolExecutor
+_CHUNK_LOCKS: dict = {}
+import threading as _th
 
-        from services.gateway.chunker import chunk_video_to_wav
 
-        chunks = chunk_video_to_wav(str(srcs[0]), str(AUDIO / sid), sid)
-        SESSIONS[sid]["chunks_total"] = len(chunks)
-        from services.assembler.assemble import assemble_session
-        from services.dub_worker.diarize import label_session
-        from services.dub_worker.voices import synthesize, translate
-        from services.dub_worker.worker import transcribe
+def _dub_chunk(sid: str, seq: int) -> str:
+    """Dub one chunk on demand; returns segment url. Gated by playback: only called for next chunk."""
+    from services.assembler.assemble import assemble_chunk
+    from services.dub_worker.voices import synthesize, translate
+    from services.dub_worker.worker import transcribe
 
+    s = SESSIONS[sid]
+    chunks = s["chunks"]
+    c = next(x for x in chunks if x["seq"] == seq)
+    lock = _CHUNK_LOCKS.setdefault((sid, seq), _th.Lock())
+    seg = OUTPUT / sid / f"seg_{seq:04d}_{s['target_lang']}.mp4"
+    if seg.exists():
+        return f"/output/{sid}/{seg.name}"
+    with lock:
+        if seg.exists():
+            return f"/output/{sid}/{seg.name}"
+        dur_ms = c["end_ms"] - c["start_ms"]
+        r = transcribe(c["wav_path"], s["source_lang"])
+        label = r.get("speaker_label") or "1"
+        tt = translate(r["text"], s["source_lang"], s["target_lang"])["target_text"]
         dubbed = Path("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
-        try:
-            spk = label_session([c["wav_path"] for c in chunks])
-        except Exception:
-            spk = {}
-
-        def _one(c):
-            try:
-                r = transcribe(c["wav_path"], s["source_lang"])
-                label = r.get("speaker_label") or spk.get(c["wav_path"], "1")
-                tt = translate(r["text"], s["source_lang"], s["target_lang"])["target_text"]
-                synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{c['seq']:04d}_{label}")
-            except Exception:
-                pass
-            return c["seq"]
-
-        import itertools
-
-        done = 0
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            for _ in ex.map(_one, chunks):
-                done += 1
-                SESSIONS[sid]["chunks_done"] = done
-                if done == 1 or done % 4 == 0:
-                    try:
-                        assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid), chunks_total=len(chunks), src_video=str(srcs[0]), preview=True)
-                        SESSIONS[sid]["preview_url"] = f"/output/{sid}/preview_{s['target_lang']}.mp4"
-                    except Exception:
-                        pass
-        assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid), chunks_total=len(chunks), src_video=str(srcs[0]))
-        SESSIONS[sid]["video_url"] = f"/output/{sid}/dubbed_{s['target_lang']}.mp4"
-        SESSIONS[sid]["elapsed_s"] = round(time.time() - t0, 1)
-    except Exception as e:
-        SESSIONS[sid]["error"] = str(e)
+        out = synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{seq:04d}_{label}", target_ms=dur_ms)
+        assemble_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, out["wav_path"], str(seg))
+        SESSIONS[sid]["chunks_done"] = max(s.get("chunks_done", 0), seq + 1)
+        return f"/output/{sid}/{seg.name}"
 
 
-@app.post("/v1/sessions/{sid}/dub")
-def start_dub(sid: str, bg: BackgroundTasks):
-    if sid not in SESSIONS:
+@app.get("/v1/sessions/{sid}/chunk/{seq}")
+def get_chunk(sid: str, seq: int):
+    s = SESSIONS.get(sid)
+    if not s or "chunks" not in s:
         raise HTTPException(404, "unknown session")
-    bg.add_task(_run_dub, sid)
-    return {"started": True}
+    total = len(s["chunks"])
+    if seq >= total:
+        return {"done": True, "total": total}
+    try:
+        url = _dub_chunk(sid, seq)
+    except Exception as e:
+        raise HTTPException(500, f"chunk dub failed: {e}")
+    return {"done": False, "seq": seq, "total": total, "url": url, "next": seq + 1}
 
 
 @app.post("/v1/sessions/{sid}/video")
@@ -175,6 +158,8 @@ async def upload_video(
         }
         (QUEUE / f"{c['chunk_id']}.json").write_text(json.dumps(msg))
     SESSIONS[sid]["chunks_total"] = len(chunks)
+    SESSIONS[sid]["chunks"] = chunks
+    SESSIONS[sid]["src"] = str(tmp_file)
     return {"chunks_total": len(chunks)}
 
 

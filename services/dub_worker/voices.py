@@ -26,7 +26,45 @@ def translate(text: str, source_lang: str, target_lang: str) -> dict:
     return {"target_text": f"[{target_lang}] {text}", "chars_billed": len(text)}
 
 
-def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "data/dubbed", name: str = "") -> dict:
+def _wav_ms(path: str) -> int:
+    import wave as _w
+
+    with _w.open(path, "rb") as w:
+        return int(w.getnframes() / (w.getframerate() or 1) * 1000)
+
+
+def _fit_to_target(wav: str, target_ms: int) -> None:
+    """Time-stretch dubbed wav to source duration via chained atempo."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if not target_ms or target_ms <= 0 or not shutil.which("ffmpeg"):
+        return
+    got = _wav_ms(wav)
+    if got <= 0:
+        return
+    if abs(got - target_ms) <= max(400, target_ms * 0.05):
+        return
+    tempo = got / target_ms  # >1 means dubbed too long -> speed up
+    tempo = min(10.0, max(0.1, tempo))
+    chain, t = [], tempo
+    while t > 2.0:
+        chain.append("atempo=2.0")
+        t /= 2.0
+    while t < 0.5:
+        chain.append("atempo=0.5")
+        t /= 0.5
+    chain.append(f"atempo={t:.3f}")
+    tmp = str(Path(wav).with_suffix(".fit.wav"))
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", wav, "-filter:a", ",".join(chain), tmp],
+        check=True, capture_output=True,
+    )
+    Path(tmp).replace(wav)
+
+
+def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "data/dubbed", name: str = "", target_ms: int = 0) -> dict:
     import shutil
     import subprocess
     from pathlib import Path
@@ -52,6 +90,7 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
                 check=True, capture_output=True,
             )
             Path(shifted).replace(wav)
+        _fit_to_target(wav, target_ms)
         if shutil.which("ffmpeg"):
             subprocess.run(
                 ["ffmpeg", "-y", "-i", wav, "-codec:a", "libmp3lame", "-q:a", "4", mp3],

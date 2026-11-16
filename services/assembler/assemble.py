@@ -37,3 +37,22 @@ def assemble_session(session_id: str, target_lang: str, dubbed_dir: str = "", ou
     }
     (out / "manifest.json").write_text(json.dumps(manifest))
     return {"video_path": str(video_path), "manifest_path": str(out / "manifest.json"), **manifest}
+
+
+def assemble_chunk(src_video: str, start_s: float, dur_s: float, dubbed_wav: str, out_mp4: str) -> str:
+    """Mux one playable segment: source picture slice + fitted dubbed audio."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    Path(out_mp4).parent.mkdir(parents=True, exist_ok=True)
+    if Path(src_video).suffix.lower() in (".mp4", ".mov", ".webm", ".mkv") and shutil.which("ffmpeg"):
+        subprocess.run(
+            ["ffmpeg", "-y", "-ss", str(start_s), "-t", str(dur_s), "-i", src_video,
+             "-i", dubbed_wav, "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0",
+             "-shortest", out_mp4],
+            check=True, capture_output=True,
+        )
+    else:
+        shutil.copy(dubbed_wav, out_mp4)
+    return out_mp4
