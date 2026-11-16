@@ -10,7 +10,8 @@ def assemble_session(session_id: str, target_lang: str, dubbed_dir: str = "", ou
     dubbed = Path(dubbed_dir) if dubbed_dir else Path(f"data/dubbed/{session_id}/{target_lang}")
     out = Path(out_dir) if out_dir else Path(f"output/{session_id}")
     out.mkdir(parents=True, exist_ok=True)
-    mp3s = sorted(dubbed.glob("*.mp3")) + sorted(dubbed.glob("*.wav")) if dubbed.exists() else []
+    wavs = sorted(dubbed.glob("*.wav")) if dubbed.exists() else []
+    mp3s = wavs or (sorted(dubbed.glob("*.mp3")) if dubbed.exists() else [])
     total = chunks_total if chunks_total is not None else max(1, len(mp3s))
     done = len(mp3s)
     video_path = out / f"dubbed_{target_lang}.mp4"

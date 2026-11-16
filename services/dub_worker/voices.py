@@ -26,13 +26,13 @@ def translate(text: str, source_lang: str, target_lang: str) -> dict:
     return {"target_text": f"[{target_lang}] {text}", "chars_billed": len(text)}
 
 
-def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "data/dubbed") -> dict:
+def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "data/dubbed", name: str = "") -> dict:
     import shutil
     import subprocess
     from pathlib import Path
 
     Path(out_dir).mkdir(parents=True, exist_ok=True)
-    base = f"{speaker_label}_{abs(hash(text)) % 9999}"
+    base = name or f"{speaker_label}_{abs(hash(text)) % 9999}"
     wav = str(Path(out_dir) / f"{base}.wav")
     mp3 = str(Path(out_dir) / f"{base}.mp3")
     voice = voice_for(speaker_label, target_lang).split("+")[0]
