@@ -16,6 +16,17 @@ OUTPUT = Path("output")
 OUTPUT.mkdir(exist_ok=True)
 app.mount("/output", StaticFiles(directory=str(OUTPUT)), name="output")
 
+# Preload heavy local models at startup so first chunk dubs in seconds.
+try:
+    from faster_whisper import WhisperModel as _WM
+
+    _WARM = _WM("tiny", device="cpu", compute_type="int8")
+    import services.dub_worker.worker as _W
+
+    _W._FW_MODEL = _WARM
+except Exception:
+    pass
+
 
 @app.get("/healthz")
 def healthz():
@@ -70,7 +81,7 @@ def _run_dub(sid: str):
             except Exception:
                 pass
             SESSIONS[sid]["chunks_done"] = i + 1
-            if (i + 1) % 4 == 0:
+            if (i + 1) == 1 or (i + 1) % 4 == 0:
                 try:
                     assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid), chunks_total=len(chunks), src_video=str(srcs[0]), preview=True)
                     SESSIONS[sid]["preview_url"] = f"/output/{sid}/preview_{s['target_lang']}.mp4"

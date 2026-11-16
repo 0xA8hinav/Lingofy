@@ -29,7 +29,7 @@ async function poll(){
   document.getElementById('st').textContent=`${st.chunks_done}/${st.chunks_total} (${pct}%) — rendering, keep this tab open`+(st.elapsed_s?` — done in ${st.elapsed_s}s`:'');
   if(st.error){document.getElementById('st').textContent='error: '+st.error;clearInterval(timer);return;}
   const v=document.getElementById('v');
-  if(st.preview_url && !v.src){v.src=st.preview_url+'?t='+Date.now();}
+  if(st.preview_url && !v.src){v.src=st.preview_url+'?t='+Date.now();v.play().catch(()=>{});}
   if(st.video_url&&(st.chunks_done>=st.chunks_total&&st.chunks_total>0)){
     clearInterval(timer);
     const m=await (await fetch('/v1/sessions/'+sid+'/manifest')).json();
