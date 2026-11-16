@@ -1,9 +1,36 @@
-"""Lightweight CPU diarization: wav stats + capped clustering (ECAPA swap-in later)."""
-import hashlib
+"""Pitch-based CPU diarization: F0 median per chunk + window smoothing.
+
+Male/female voices differ most in fundamental frequency (~90-150Hz vs
+~170-280Hz). Energy clustering flips mid-sentence; F0 with a majority
+window keeps one voice per sentence. ECAPA remains the upgrade path.
+"""
+import struct
 import wave
 from pathlib import Path
 
-import struct
+
+def _f0_median(vals, sr=16000) -> float:
+    import math
+
+    n = len(vals)
+    if n < sr // 2:
+        return 0.0
+    # mean-removed autocorrelation over 50..400Hz lags
+    mean = sum(vals) / n
+    x = [v - mean for v in vals[::4]]  # 4kHz decimation for speed
+    sr_d = sr // 4
+    lo, hi = max(1, sr_d // 400), min(len(x) // 2, sr_d // 50)
+    best_lag, best_v = 0, 0.0
+    e0 = sum(v * v for v in x) or 1.0
+    step = max(1, (hi - lo) // 60)
+    for lag in range(lo, hi, step):
+        s = sum(a * b for a, b in zip(x, x[lag:lag + len(x) - lag]))
+        v = s / e0
+        if v > best_v:
+            best_v, best_lag = v, lag
+    if best_v < 0.25:
+        return 0.0
+    return sr_d / best_lag
 
 
 def _embed(wav_path: str) -> list[float]:
@@ -12,22 +39,38 @@ def _embed(wav_path: str) -> list[float]:
         raw = w.readframes(n)
         fmt = "<" + "h" * (len(raw) // 2)
         vals = struct.unpack(fmt, raw) if raw else (0,)
-        mean = sum(v * v for v in vals) / max(1, len(vals))
-        var = sum(((v * v) - mean) ** 2 for v in vals) / max(1, len(vals))
-        zero = sum(1 for a, b in zip(vals, vals[1:]) if (a < 0) != (b < 0)) / max(1, len(vals))
-        return [float(mean / 1e8), float(var / 1e16), float(zero)]
+        f0 = _f0_median(list(vals), w.getframerate())
+        # 8s chunk may hold 2 turns; split halves and keep the steadier half
+        h = len(vals) // 2
+        f1 = _f0_median(list(vals[:h]), w.getframerate())
+        f2 = _f0_median(list(vals[h:]), w.getframerate())
+        dom = f1 if abs(f1 - f0) <= abs(f2 - f0) else f2
+        return [float(dom or f0)]
 
 
 def cluster_session(embeddings: list[list[float]]) -> list[int]:
-    # deterministic capped clustering: sort by first dim, split into <=3 groups
-    idx = sorted(range(len(embeddings)), key=lambda i: embeddings[i][0])
-    labels = [0] * len(embeddings)
-    k = min(3, len(embeddings))
-    for rank, i in enumerate(idx):
-        labels[i] = min(3, rank * k // max(1, len(embeddings)) + 1)
-        if labels[i] < 1:
-            labels[i] = 1
-    return labels
+    # absolute pitch split: <=160Hz -> 1 (low), else 2 (high); unvoiced (0) carried forward
+    out, last = [], 1
+    for e in embeddings:
+        f = e[0]
+        if f <= 0:
+            out.append(last)
+        else:
+            last = 1 if f <= 200 else 2
+            out.append(last)
+    return out
+
+
+def _smooth(labels: list[int], width: int = 5) -> list[int]:
+    out = list(labels)
+    for i in range(len(out)):
+        win = out[max(0, i - width // 2):i + width // 2 + 1]
+        out[i] = max(set(win), key=win.count)
+    # snap isolated singles flanked by the same label
+    for i in range(1, len(out) - 1):
+        if out[i - 1] == out[i + 1] != out[i]:
+            out[i] = out[i - 1]
+    return out
 
 
 def label_chunk(wav_path: str, session_id: str) -> str:
@@ -37,9 +80,9 @@ def label_chunk(wav_path: str, session_id: str) -> str:
 
 
 def label_session(wav_paths: list[str]) -> dict[str, str]:
-    """Two-pass joint clustering: steady labels across a session (OSS, CPU)."""
+    """Two-pass joint clustering + smoothing: one voice per sentence."""
     embs = [_embed(p) for p in wav_paths]
-    labels = cluster_session(embs)
+    labels = _smooth(cluster_session(embs))
     return {p: str(l) for p, l in zip(wav_paths, labels)}
 
 
