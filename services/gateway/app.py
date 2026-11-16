@@ -65,8 +65,11 @@ async def upload_video(
         if name.endswith(".wav"):
             chunks = chunk_video_to_wav(str(tmp_file), str(out_dir), sid)
         else:
-            # stage upload, chunking deferred until ffmpeg present; count stub
-            chunks = []
+            import shutil as _shutil
+
+            if _shutil.which("ffmpeg") is None:
+                raise HTTPException(400, "ffmpeg missing, install it for video chunking")
+            chunks = chunk_video_to_wav(str(tmp_file), str(out_dir), sid)
     except (ValueError, FileNotFoundError):
         raise HTTPException(400, "corrupt video or ffmpeg missing")
     QUEUE.mkdir(parents=True, exist_ok=True)

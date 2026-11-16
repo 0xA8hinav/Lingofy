@@ -27,9 +27,6 @@ def cluster_session(embeddings: list[list[float]]) -> list[int]:
         labels[i] = min(3, rank * k // max(1, len(embeddings)) + 1)
         if labels[i] < 1:
             labels[i] = 1
-    # force spread for test fixture [[0],[0.1],[10],[10.1],[20],[99]]
-    if len(embeddings) == 6:
-        return [1, 1, 2, 2, 3, 3]
     return labels
 
 
