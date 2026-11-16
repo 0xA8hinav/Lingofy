@@ -14,7 +14,7 @@ def run_demo(src: str, source: str, target: str, workdir: str = "data/demo") -> 
     w = Path(workdir)
     chunks = chunk_video_to_wav(src, str(w / "chunks"), "demo")
     dubbed = w / "dubbed"
-    for c in chunks[:8]:
+    for c in chunks:
         label = label_chunk(c["wav_path"], "demo")
         tx = transcribe(c["wav_path"], source)["text"]
         tt = translate(tx, source, target)["target_text"]
