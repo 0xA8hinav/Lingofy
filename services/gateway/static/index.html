@@ -1,0 +1,20 @@
+<!doctype html>
+<html><body>
+<h1>Lingofy dub</h1>
+<input type="file" id="f" accept="video/*,audio/*" />
+<select id="dir"><option value="en-hi">EN to HI</option><option value="hi-en">HI to EN</option></select>
+<button onclick="go()">Dub</button>
+<video id="v" controls width="640"></video>
+<div id="st"></div>
+<script>
+async function go(){
+  const dir=document.getElementById('dir').value.split('-');
+  const s=await (await fetch('/v1/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_lang:dir[0],target_lang:dir[1]})})).json();
+  const fd=new FormData(); fd.append('file', document.getElementById('f').files[0]);
+  const u=await (await fetch('/v1/sessions/'+s.session_id+'/video',{method:'POST',body:fd})).json();
+  document.getElementById('st').textContent='chunks: '+u.chunks_total;
+  const m=await (await fetch('/v1/sessions/'+s.session_id+'/manifest')).json();
+  document.getElementById('v').src=m.video_url;
+}
+</script>
+</body></html>
