@@ -81,16 +81,16 @@ See `docs/architecture.md` for the layered view and `docs/TECHNICAL_REFERENCE.md
 
 ## 3. Components (MVP — 3 images)
 
-| Component           | Tech                                                     | Responsibility                                                                                              | Scales via                                                |
-| ---------------------| ----------------------------------------------------------| -------------------------------------------------------------------------------------------------------------| -----------------------------------------------------------|
+| Component           | Tech                                                     | Responsibility                                                                                              | Scales via                                                       |
+| ---------------------| ----------------------------------------------------------| -------------------------------------------------------------------------------------------------------------| ------------------------------------------------------------------|
 | **Gateway**         | FastAPI + ffmpeg + Python                                | Sessions, upload ingest, 8s silence-snapped chunking, status/manifest                                       | 1 replica (MVP — avoids SQLite split-brain; HPA is future scope) |
-| **Dub-Worker**      | Python + Deepgram/DeepL/ElevenLabs SDKs + Piper baked in | One chunk in → ASR → Translate (1→N langs) → TTS sequentially, with stage timers                            | KEDA on `dub-tasks` depth (`queueLength: 5`, min 1 max 8) |
-| **Assembler**       | Python + ffmpeg                                          | Reorder by `seq`, `atempo` align, emit HLS playlists + manifest                                             | HPA on CPU (1–2 pods)                                     |
-| **Provider helper** | `providers.py` inside worker (not a separate service)    | 2 retries w/ jitter, dumb breaker (3 fails → fallback 60s), `chars_billed` reporting                        | —                                                         |
-| **Queues**          | SQS ×2                                                   | `dub-tasks` (visibility 60s, maxReceive 3) + `lingofy-dlq` (manual redrive)                                 | managed                                                   |
-| **Object store**    | S3                                                       | Chunk WAVs, per-language MP3s, playlists, manifests                                                         | managed                                                   |
-| **Observability**   | Prometheus, Grafana, Alertmanager                        | One dashboard (SLO + stages + scaling + cost), two alerts (SLOBurn, DLQNonEmpty), JSON logs with `chunk_id` | static                                                    |
-| **Cost counter**    | Prometheus counter in worker                             | `cost_cents_total` from `prices.yaml` → one cost panel                                                      | in-worker                                                 |
+| **Dub-Worker**      | Python + Deepgram/DeepL/ElevenLabs SDKs + Piper baked in | One chunk in → ASR → Translate (1→N langs) → TTS sequentially, with stage timers                            | KEDA on `dub-tasks` depth (`queueLength: 5`, min 1 max 8)        |
+| **Assembler**       | Python + ffmpeg                                          | Reorder by `seq`, `atempo` align, emit HLS playlists + manifest                                             | HPA on CPU (1–2 pods)                                            |
+| **Provider helper** | `providers.py` inside worker (not a separate service)    | 2 retries w/ jitter, dumb breaker (3 fails → fallback 60s), `chars_billed` reporting                        | —                                                                |
+| **Queues**          | SQS ×2                                                   | `dub-tasks` (visibility 60s, maxReceive 3) + `lingofy-dlq` (manual redrive)                                 | managed                                                          |
+| **Object store**    | S3                                                       | Chunk WAVs, per-language MP3s, playlists, manifests                                                         | managed                                                          |
+| **Observability**   | Prometheus, Grafana, Alertmanager                        | One dashboard (SLO + stages + scaling + cost), two alerts (SLOBurn, DLQNonEmpty), JSON logs with `chunk_id` | static                                                           |
+| **Cost counter**    | Prometheus counter in worker                             | `cost_cents_total` from `prices.yaml` → one cost panel                                                      | in-worker                                                        |
 
 ## 4. End-to-end data flow (MVP)
 

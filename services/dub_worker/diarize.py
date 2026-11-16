@@ -12,10 +12,10 @@ def _embed(wav_path: str) -> list[float]:
         raw = w.readframes(n)
         fmt = "<" + "h" * (len(raw) // 2)
         vals = struct.unpack(fmt, raw) if raw else (0,)
-        mean = sum(vals) / max(1, len(vals))
-        var = sum((v - mean) ** 2 for v in vals) / max(1, len(vals))
-        h = int(hashlib.md5(Path(wav_path).name.encode()).hexdigest()[:8], 16) % 1000 / 1000
-        return [float(mean / 1000), float(var / 1e6), float(h)]
+        mean = sum(v * v for v in vals) / max(1, len(vals))
+        var = sum(((v * v) - mean) ** 2 for v in vals) / max(1, len(vals))
+        zero = sum(1 for a, b in zip(vals, vals[1:]) if (a < 0) != (b < 0)) / max(1, len(vals))
+        return [float(mean / 1e8), float(var / 1e16), float(zero)]
 
 
 def cluster_session(embeddings: list[list[float]]) -> list[int]:
@@ -34,6 +34,13 @@ def label_chunk(wav_path: str, session_id: str) -> str:
     e = _embed(wav_path)
     lab = cluster_session([e])[0]
     return str(lab)
+
+
+def label_session(wav_paths: list[str]) -> dict[str, str]:
+    """Two-pass joint clustering: steady labels across a session (OSS, CPU)."""
+    embs = [_embed(p) for p in wav_paths]
+    labels = cluster_session(embs)
+    return {p: str(l) for p, l in zip(wav_paths, labels)}
 
 
 def smooth_labels(session_id: str) -> None:
