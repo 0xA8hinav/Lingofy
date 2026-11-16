@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Env
+.env
+
+# Pipeline scratch (local SQS/S3 stand-in)
+data/
+output/
+
+# SDD workspaces
+.superpowers/
+.worktrees/
+worktrees/
+
+# Large media (regenerate via scripts/trim_sample.sh)
+*.mp4
+*.wav
+!tests/fixtures/**/*.wav
+
+# OS
+.DS_Store
