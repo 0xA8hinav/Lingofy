@@ -20,7 +20,10 @@ def assemble_session(session_id: str, target_lang: str, dubbed_dir: str = "", ou
         lst.write_text("".join(f"file '{p.resolve()}'\n" for p in mp3s))
         audio = out / "dubbed_audio.m4a"
         subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c:a", "aac", str(audio)], check=True, capture_output=True)
-        subprocess.run(["ffmpeg", "-y", "-i", src_video, "-i", str(audio), "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0", "-shortest", str(video_path)], check=True, capture_output=True)
+        if Path(src_video).suffix.lower() in (".mp4", ".mov", ".webm", ".mkv"):
+            subprocess.run(["ffmpeg", "-y", "-i", src_video, "-i", str(audio), "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0", "-shortest", str(video_path)], check=True, capture_output=True)
+        else:
+            audio.replace(video_path)
     else:
         video_path.write_bytes(b"".join(p.read_bytes() for p in mp3s) or b"EMPTY")
     manifest = {
