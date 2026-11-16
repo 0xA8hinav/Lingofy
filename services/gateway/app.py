@@ -88,9 +88,9 @@ def _run_dub(sid: str):
 
         def _one(c):
             try:
-                label = spk.get(c["wav_path"], "1")
-                tx = transcribe(c["wav_path"], s["source_lang"])["text"]
-                tt = translate(tx, s["source_lang"], s["target_lang"])["target_text"]
+                r = transcribe(c["wav_path"], s["source_lang"])
+                label = r.get("speaker_label") or spk.get(c["wav_path"], "1")
+                tt = translate(r["text"], s["source_lang"], s["target_lang"])["target_text"]
                 synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{c['seq']:04d}_{label}")
             except Exception:
                 pass

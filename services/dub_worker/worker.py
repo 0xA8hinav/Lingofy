@@ -1,7 +1,64 @@
-"""Worker v0: poll local queue, transcribe via Deepgram or mock."""
+"""Worker: transcribe via Chirp (diarized) > faster-whisper > mock. $0 offline default."""
 import json
 import os
 from pathlib import Path
+
+
+def transcribe_chirp(wav_path: str, source_lang: str, max_speakers: int = 3) -> dict:
+    """Google Chirp with speaker diarization + word timestamps (OSS client).
+
+    Needs: Speech-to-Text API enabled, GOOGLE_CLOUD_PROJECT set,
+    GOOGLE_APPLICATION_CREDENTIALS pointing at a service-account JSON.
+    Region via GOOGLE_CLOUD_REGION (default us-central1).
+    """
+    from google.cloud import speech_v2 as speech
+
+    project = os.environ["GOOGLE_CLOUD_PROJECT"]
+    region = os.getenv("GOOGLE_CLOUD_REGION", "us-central1")
+    client = speech.SpeechClient(
+        client_options={"api_endpoint": f"{region}-speech.googleapis.com"}
+    )
+    lang = "hi-IN" if source_lang.startswith("hi") else "en-IN"
+    config = speech.RecognitionConfig(
+        auto_decoding_config=speech.AutoDecodingConfig(),
+        language_codes=[lang],
+        alternative_language_codes=["en-IN", "hi-IN"] if lang == "hi-IN" else ["hi-IN", "en-IN"],
+        model="chirp_2",
+        features=speech.RecognitionFeatures(
+            enable_word_time_offsets=True,
+            diarization_config=speech.SpeakerDiarizationConfig(
+                min_speaker_count=1, max_speaker_count=max_speakers
+            ),
+        ),
+    )
+    with open(wav_path, "rb") as f:
+        content = f.read()
+    request = speech.RecognizeRequest(
+        recognizer=f"projects/{project}/locations/{region}/recognizers/_",
+        config=config,
+        content=content,
+    )
+    resp = client.recognize(request=request)
+    words, votes: list = [], {}
+    text_parts = []
+    for r in resp.results:
+        alt = r.alternatives[0]
+        text_parts.append(alt.transcript)
+        for w in alt.words:
+            spk = str(getattr(w, "speaker_label", "1") or "1")
+            votes[spk] = votes.get(spk, 0) + 1
+            words.append({"word": w.word, "speaker": spk})
+    text = " ".join(text_parts).strip()
+    if not text:
+        raise ValueError("empty chirp transcript")
+    top = max(votes, key=votes.get) if votes else "1"
+    return {
+        "text": text,
+        "confidence": 0.95,
+        "provider": "chirp",
+        "speaker_label": top,
+        "words": words,
+    }
 
 
 def poll_once(queue_dir: str) -> dict | None:
@@ -18,6 +75,11 @@ def poll_once(queue_dir: str) -> dict | None:
 def transcribe(wav_path: str, source_lang: str) -> dict:
     if os.getenv("DEEPGRAM_API_KEY"):
         return {"text": "deepgram transcript", "confidence": 0.9, "provider": "deepgram"}
+    if os.getenv("GOOGLE_CLOUD_PROJECT"):
+        try:
+            return transcribe_chirp(wav_path, source_lang)
+        except Exception:
+            pass
     try:
         from faster_whisper import WhisperModel
 
