@@ -26,6 +26,12 @@ try:
     _W._FW_MODEL = _WARM
 except Exception:
     pass
+try:
+    import argostranslate.translate as _T
+
+    _T.translate("warmup", "en", "hi")
+except Exception:
+    pass
 
 
 @app.get("/healthz")
@@ -62,31 +68,41 @@ def _run_dub(sid: str):
         return
     t0 = time.time()
     try:
+        from concurrent.futures import ThreadPoolExecutor
+
         from services.gateway.chunker import chunk_video_to_wav
 
         chunks = chunk_video_to_wav(str(srcs[0]), str(AUDIO / sid), sid)
         SESSIONS[sid]["chunks_total"] = len(chunks)
         from services.assembler.assemble import assemble_session
-        from services.dub_worker.diarize import label_chunk
         from services.dub_worker.voices import synthesize, translate
         from services.dub_worker.worker import transcribe
 
         dubbed = Path("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
-        for i, c in enumerate(chunks):
+
+        def _one(c):
             try:
                 tx = transcribe(c["wav_path"], s["source_lang"])["text"]
                 tt = translate(tx, s["source_lang"], s["target_lang"])["target_text"]
                 synthesize(tt, s["target_lang"], "1", str(dubbed), name=f"{c['seq']:04d}_1")
             except Exception:
                 pass
-            SESSIONS[sid]["chunks_done"] = i + 1
-            if (i + 1) == 1 or (i + 1) % 4 == 0:
-                try:
-                    assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid), chunks_total=len(chunks), src_video=str(srcs[0]), preview=True)
-                    SESSIONS[sid]["preview_url"] = f"/output/{sid}/preview_{s['target_lang']}.mp4"
-                except Exception:
-                    pass
+            return c["seq"]
+
+        import itertools
+
+        done = 0
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for _ in ex.map(_one, chunks):
+                done += 1
+                SESSIONS[sid]["chunks_done"] = done
+                if done == 1 or done % 4 == 0:
+                    try:
+                        assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid), chunks_total=len(chunks), src_video=str(srcs[0]), preview=True)
+                        SESSIONS[sid]["preview_url"] = f"/output/{sid}/preview_{s['target_lang']}.mp4"
+                    except Exception:
+                        pass
         assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid), chunks_total=len(chunks), src_video=str(srcs[0]))
         SESSIONS[sid]["video_url"] = f"/output/{sid}/dubbed_{s['target_lang']}.mp4"
         SESSIONS[sid]["elapsed_s"] = round(time.time() - t0, 1)
