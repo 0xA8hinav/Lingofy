@@ -7,6 +7,61 @@ VOICE_MAP = {
 
 VOICE_DIR = "assets/voices"
 
+# Gemini prebuilt voices pool; each session speaker gets a random one (stable
+# for the session). Hindi-capable neural voices, free tier.
+GEMINI_VOICE_POOL = ["Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda",
+                     "Orus", "Zephyr", "Sulafat", "Callirrhoe"]
+_SESSION_VOICES: dict = {}
+
+
+def gemini_voice_for(speaker_label: str) -> str:
+    import random
+
+    if speaker_label not in _SESSION_VOICES:
+        used = set(_SESSION_VOICES.values())
+        free = [v for v in GEMINI_VOICE_POOL if v not in used] or GEMINI_VOICE_POOL
+        _SESSION_VOICES[speaker_label] = random.choice(free)
+    return _SESSION_VOICES[speaker_label]
+
+
+def gemini_tts(text: str, voice: str, out_wav: str) -> None:
+    """Gemini neural TTS -> 24kHz wav. Raises on failure (caller falls back)."""
+    import json as _json
+    import wave as _w
+
+    from google import genai
+
+    keys = _json.load(open("/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json"))["keys"]
+    from google.genai import types as _t
+
+    last = None
+    for key in keys:
+        try:
+            client = genai.Client(api_key=key)
+            resp = client.models.generate_content(
+                model="gemini-2.5-flash-preview-tts",
+                contents=text,
+                config=_t.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=_t.SpeechConfig(voice_config=_t.VoiceConfig(
+                        prebuilt_voice_config=_t.PrebuiltVoiceConfig(voice_name=voice))),
+                ),
+            )
+            for p in resp.candidates[0].content.parts:
+                inline = getattr(p, "inline_data", None)
+                if inline and inline.data:
+                    with _w.open(out_wav, "wb") as _o:
+                        _o.setnchannels(1)
+                        _o.setsampwidth(2)
+                        _o.setframerate(24000)
+                        _o.writeframes(inline.data)
+                    return
+            raise ValueError("no audio in gemini tts response")
+        except Exception as e:
+            last = e
+            continue
+    raise RuntimeError(f"gemini tts failed: {last}")
+
 
 # Natural speaking rate per language at length-scale 1.0 (measured, chars/sec).
 # We ALWAYS synthesize at natural rate (scale 1.0). Duration fit is done by
@@ -94,14 +149,25 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
     vfull = voice_for(speaker_label, target_lang)
     pitch_factor = 1.12 if vfull.endswith("+pitch-shift") else 0.88 if vfull.endswith("+pitch-shift2") else 0.0
     try:
+        gemini_tts(text, gemini_voice_for(speaker_label), wav)
+        provider_used = "gemini-tts"
+        if shutil.which("ffmpeg"):
+            uni = str(Path(out_dir) / f"{base}_22k.wav")
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", wav, "-ar", "22050", "-ac", "1", uni],
+                check=True, capture_output=True,
+            )
+            Path(uni).replace(wav)
+    except Exception:
         if not Path(model).exists():
             raise FileNotFoundError(model)
-        scale = _rate_scale(text, target_lang, target_ms)
         subprocess.run(
             ["python3", "-m", "piper", "--model", model, "--output-file", wav,
-             "--length-scale", f"{scale:.3f}"],
+             "--length-scale", "1.000"],
             input=text.encode(), check=True, capture_output=True, timeout=60,
         )
+        provider_used = "piper"
+    try:
         if pitch_factor and shutil.which("ffmpeg"):
             shifted = str(Path(out_dir) / f"{base}_shift.wav")
             subprocess.run(
@@ -117,7 +183,7 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
             )
         else:
             mp3 = wav
-        return {"mp3_path": mp3, "wav_path": wav, "provider": "piper"}
+        return {"mp3_path": mp3, "wav_path": wav, "provider": provider_used}
     except Exception:
         Path(mp3).write_bytes(b"ID3" + text.encode()[:100] + b"\x00" * 100)
         return {"mp3_path": mp3, "wav_path": mp3, "provider": "piper"}
