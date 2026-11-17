@@ -1,6 +1,8 @@
 VOICE_MAP = {
-    "en": {"1": "en_US-lessac-medium", "2": "en_US-ryan-medium", "3": "en_US-ryan-medium+pitch-shift"},
-    "hi": {"1": "hi_IN-pratham-medium", "2": "hi_IN-priyamvada-medium", "3": "hi_IN-pratham-medium+pitch-shift"},
+    "en": {"1": "en_US-lessac-medium", "2": "en_US-ryan-medium", "3": "en_US-ryan-medium+pitch-shift",
+           "4": "en_US-lessac-medium+pitch-shift", "5": "en_US-ryan-medium+pitch-shift2", "6": "en_US-lessac-medium+pitch-shift2"},
+    "hi": {"1": "hi_IN-pratham-medium", "2": "hi_IN-priyamvada-medium", "3": "hi_IN-pratham-medium+pitch-shift",
+           "4": "hi_IN-priyamvada-medium+pitch-shift", "5": "hi_IN-pratham-medium+pitch-shift2", "6": "hi_IN-priyamvada-medium+pitch-shift2"},
 }
 
 VOICE_DIR = "assets/voices"
@@ -75,7 +77,8 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
     mp3 = str(Path(out_dir) / f"{base}.mp3")
     voice = voice_for(speaker_label, target_lang).split("+")[0]
     model = str(Path(VOICE_DIR) / f"{voice}.onnx")
-    pitch = "+pitch-shift" in voice_for(speaker_label, target_lang)
+    vfull = voice_for(speaker_label, target_lang)
+    pitch_factor = 1.12 if vfull.endswith("+pitch-shift") else 0.88 if vfull.endswith("+pitch-shift2") else 0.0
     try:
         if not Path(model).exists():
             raise FileNotFoundError(model)
@@ -83,10 +86,10 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
             ["python3", "-m", "piper", "--model", model, "--output-file", wav],
             input=text.encode(), check=True, capture_output=True, timeout=60,
         )
-        if pitch and shutil.which("ffmpeg"):
+        if pitch_factor and shutil.which("ffmpeg"):
             shifted = str(Path(out_dir) / f"{base}_shift.wav")
             subprocess.run(
-                ["ffmpeg", "-y", "-i", wav, "-filter:a", "asetrate=22050*1.12,aresample=22050", shifted],
+                ["ffmpeg", "-y", "-i", wav, "-filter:a", f"asetrate=22050*{pitch_factor},aresample=22050", shifted],
                 check=True, capture_output=True,
             )
             Path(shifted).replace(wav)

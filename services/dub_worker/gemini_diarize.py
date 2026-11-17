@@ -22,14 +22,93 @@ def _keys() -> list:
 
 def _prompt(total_s: float) -> str:
     return (
-        "Identify the speakers in this audio. Return ONLY a JSON array like "
-        '[{"start":0.0,"end":8.5,"speaker":"SPEAKER_1"}]. Max 3 speakers. '
+        "Identify ALL distinct speakers in this audio, however many there are. "
+        "Return ONLY a JSON array like "
+        '[{"start":0.0,"end":8.5,"speaker":"SPEAKER_1"}]. '
         f"Cover the full {total_s:.0f} seconds with no gaps."
     )
 
 
 def diarize_file(audio_path: str, total_s: float) -> list:
-    """Return [{start, end, speaker}] with SPEAKER_N normalized to 1..3."""
+    """Native diarization via gemini-3.5-transcribe: up to 8 speakers + word times.
+
+    Falls back to the 2.5-flash JSON prompt if the transcribe API is unavailable.
+    """
+    try:
+        return _diarize_transcribe_api(audio_path)
+    except Exception as e:
+        return _diarize_json_prompt(audio_path, total_s, e)
+
+
+def _diarize_transcribe_api(audio_path: str) -> list:
+    from google import genai
+
+    keys = _keys()
+    if not keys:
+        raise RuntimeError("no gemini keys")
+    last_err = None
+    for key in keys:
+        try:
+            client = genai.Client(api_key=key)
+            up = client.files.upload(file=audio_path)
+            resp = client.interactions.create(
+                model="gemini-3.5-transcribe",
+                input=[up],
+                generation_config={
+                    "transcription_config": {
+                        "language_codes": [],
+                        "mode": {
+                            "type": "verbatim",
+                            "diarization_mode": "speaker",
+                            "timestamp_granularities": ["word"],
+                        },
+                    }
+                },
+            )
+            words = []
+            for step in getattr(resp, "steps", []) or []:
+                for content in getattr(step, "content", []) or []:
+                    for a in getattr(content, "annotations", []) or []:
+                        if getattr(a, "type", None) == "word_info":
+                            words.append(a)
+            if not words:
+                raise ValueError("no word annotations returned")
+            return _words_to_segments(words)
+        except Exception as e:
+            last_err = e
+            time.sleep(2)
+            continue
+    raise RuntimeError(f"transcribe api failed on all keys: {last_err}")
+
+
+def _words_to_segments(words: list) -> list:
+    """Merge consecutive same-speaker words into segments, cap 8 speakers."""
+    order: dict = {}
+    segs, cur = [], None
+    for w in words:
+        raw = str(getattr(w, "speaker", "") or "")
+        n = "".join(ch for ch in raw if ch.isdigit()) or "1"
+        lab = str(min(max(int(n), 1), 8))
+        if lab not in order:
+            order[lab] = str(len(order) + 1)
+        lab = order[lab]
+        start = getattr(w, "start_offset", None)
+        end = getattr(w, "end_offset", None)
+        try:
+            s = float(start.total_seconds()) if hasattr(start, "total_seconds") else float(start or 0)
+            e = float(end.total_seconds()) if hasattr(end, "total_seconds") else float(end or 0)
+        except Exception:
+            s, e = 0.0, 0.0
+        if cur and cur["speaker"] == lab:
+            cur["end"] = max(cur["end"], e)
+        else:
+            cur = {"start": s, "end": max(e, s), "speaker": lab}
+            segs.append(cur)
+    return segs
+
+
+def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> list:
+    """Fallback: 2.5-flash JSON segment prompt (auto-detect count, cap 6)."""
     from google import genai
     from google.genai import types
 
@@ -59,7 +138,7 @@ def diarize_file(audio_path: str, total_s: float) -> list:
                 spk = str(s.get("speaker", "SPEAKER_1"))
                 n = "".join(ch for ch in spk if ch.isdigit()) or "1"
                 out.append({"start": float(s["start"]), "end": float(s["end"]),
-                            "speaker": str(min(max(int(n), 1), 3))})
+                            "speaker": str(min(max(int(n), 1), 6))})
             segs = sorted(out, key=lambda x: x["start"])
             # 3.5-lite finds boundaries but often returns one label: identity via local ECAPA
             if len(segs) > 1 and len({s["speaker"] for s in segs}) == 1:
