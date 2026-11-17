@@ -56,3 +56,53 @@ def assemble_chunk(src_video: str, start_s: float, dur_s: float, dubbed_wav: str
     else:
         shutil.copy(dubbed_wav, out_mp4)
     return out_mp4
+
+
+def assemble_mse_chunk(src_video: str, start_s: float, dur_s: float, dubbed_wav: str, out_path: str) -> str:
+    """Re-encoded fragmented MP4 segment (empty_moov) for MSE append playback.
+
+    Same encoder settings every call, so one init segment fits all chunks.
+    Returns path to the FULL fmp4; use split_fmp4() for init/media parts.
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    if Path(src_video).suffix.lower() in (".mp4", ".mov", ".webm", ".mkv") and shutil.which("ffmpeg"):
+        subprocess.run(
+            ["ffmpeg", "-y", "-ss", str(start_s), "-t", str(dur_s), "-i", src_video,
+             "-i", dubbed_wav, "-map", "0:v:0", "-map", "1:a:0",
+             "-c:v", "mpeg4", "-b:v", "1000k", "-c:a", "aac", "-ar", "44100", "-ac", "2",
+             "-movflags", "empty_moov+default_base_moof+frag_keyframe",
+             "-frag_duration", "8000000", "-f", "mp4", out_path],
+            check=True, capture_output=True,
+        )
+    else:
+        shutil.copy(dubbed_wav, out_path)
+    return out_path
+
+
+def split_fmp4(fmp4_path: str) -> tuple:
+    """Split fragmented MP4 into (init_bytes, media_bytes). Drops trailing mfra."""
+    data = Path(fmp4_path).read_bytes()
+    i, boxes = 0, []
+    while i + 8 <= len(data):
+        n = int.from_bytes(data[i:i + 4], "big")
+        t = data[i + 4:i + 8]
+        size = n if n >= 8 else len(data) - i
+        boxes.append((t, i, size))
+        if n < 8:
+            break
+        i += size
+    init_end = 0
+    for t, off, size in boxes:
+        if t == b"moof":
+            init_end = off
+            break
+    media_end = len(data)
+    for t, off, size in boxes:
+        if t == b"mfra":
+            media_end = off
+            break
+    return data[:init_end], data[init_end:media_end]

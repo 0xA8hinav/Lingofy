@@ -244,11 +244,22 @@ def _dub_chunk(sid: str, seq: int) -> str:
     lock = _CHUNK_LOCKS.setdefault((sid, seq), _th.Lock())
     seg = OUTPUT / sid / f"seg_{seq:04d}_{s['target_lang']}.mp4"
     orig = OUTPUT / sid / f"orig_{seq:04d}.mp4"
+    mse = OUTPUT / sid / f"mse_{seq:04d}.m4s"
+
+    def _resp(label="", gender=""):
+        _dur = c["end_ms"] - c["start_ms"]
+        return {"url": f"/output/{sid}/{seg.name}",
+                "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else "",
+                "mse_url": f"/output/{sid}/{mse.name}" if mse.exists() else "",
+                "mse_init": f"/output/{sid}/mse_init.mp4",
+                "start": c["start_ms"] / 1000, "dur": _dur / 1000,
+                "speaker": label, "gender": gender or "unknown"}
+
     if seg.exists():
-        return {"url": f"/output/{sid}/{seg.name}", "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else ""}
+        return _resp()
     with lock:
         if seg.exists():
-            return {"url": f"/output/{sid}/{seg.name}", "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else ""}
+            return _resp()
         dur_ms = c["end_ms"] - c["start_ms"]
         # Gemini-first, zero paid APIs: file transcript sliced per chunk + file speaker map
         try:
@@ -279,9 +290,31 @@ def _dub_chunk(sid: str, seq: int) -> str:
             assemble_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, c["wav_path"], str(orig))
         except Exception:
             pass
+        # MSE streaming segment (fragmented mp4, same encoder settings every chunk)
+        mse = OUTPUT / sid / f"mse_{seq:04d}.m4s"
+        try:
+            from services.assembler.assemble import assemble_mse_chunk, split_fmp4
+
+            if not mse.exists():
+                full = OUTPUT / sid / f"_full_{seq:04d}.mp4"
+                assemble_mse_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, out["wav_path"], str(full))
+                _init, media = split_fmp4(str(full))
+                initp = OUTPUT / sid / "mse_init.mp4"
+                if not initp.exists():
+                    initp.write_bytes(_init)
+                mse.write_bytes(media)
+                try:
+                    full.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
         SESSIONS[sid]["chunks_done"] = max(s.get("chunks_done", 0), seq + 1)
         return {"url": f"/output/{sid}/{seg.name}",
                 "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else "",
+                "mse_url": f"/output/{sid}/{mse.name}" if mse.exists() else "",
+                "mse_init": f"/output/{sid}/mse_init.mp4",
+                "start": c["start_ms"] / 1000, "dur": dur_ms / 1000,
                 "speaker": label, "gender": gm["gender"] or "unknown"}
 
 
@@ -362,10 +395,20 @@ async def upload_video(
     SESSIONS[sid]["chunks_total"] = len(chunks)
     SESSIONS[sid]["chunks"] = chunks
     SESSIONS[sid]["src"] = str(tmp_file)
+    total_s = max(c["end_ms"] for c in chunks) / 1000 if chunks else 0
+    try:
+        _out = OUTPUT / sid
+        _out.mkdir(parents=True, exist_ok=True)
+        import shutil as _sh
+
+        _sh.copy(str(tmp_file), str(_out / "orig.mp4"))
+        SESSIONS[sid]["orig_url"] = f"/output/{sid}/orig.mp4"
+    except Exception:
+        pass
     # warm the file-level transcript+speaker map now, so chunk 0 dubs in seconds
     bg.add_task(_session_full_wav, sid)
     bg.add_task(_warm_maps, sid)
-    return {"chunks_total": len(chunks)}
+    return {"chunks_total": len(chunks), "total_s": total_s}
 
 
 def _warm_maps(sid: str):
