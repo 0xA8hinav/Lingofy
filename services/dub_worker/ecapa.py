@@ -46,16 +46,9 @@ def embed_wav(path: str) -> np.ndarray:
 
 
 def _smooth(labels: list) -> list:
+    # Snap only isolated single-chunk blips (likely mid-sentence flips).
+    # No majority vote: it erases genuine short turns.
     out = list(labels)
-    for i in range(len(out)):
-        win = out[max(0, i - 2):i + 3]
-        counts = {}
-        for l in win:
-            counts[l] = counts.get(l, 0) + 1
-        top = max(counts.values())
-        # ties keep the current label: never flip on ambiguous windows
-        winners = [l for l, c in counts.items() if c == top]
-        out[i] = out[i] if out[i] in winners else winners[0]
     for i in range(1, len(out) - 1):
         if out[i - 1] == out[i + 1] != out[i]:
             out[i] = out[i - 1]
