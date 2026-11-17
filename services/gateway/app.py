@@ -84,9 +84,10 @@ def _run_dub(sid: str):
                     label = _gd.speaker_at(segs, c["start_ms"] / 1000)
                 if not text:
                     return c["seq"]
+                gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
                 tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
                 dur_ms = c["end_ms"] - c["start_ms"]
-                synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{c['seq']:04d}_{label}", target_ms=dur_ms)
+                synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{c['seq']:04d}_{label}", target_ms=dur_ms, gender=gm["gender"], gindex=gm["gindex"])
             except Exception:
                 pass
             return c["seq"]
@@ -107,6 +108,44 @@ def _run_dub(sid: str):
 _CHUNK_LOCKS: dict = {}
 import threading as _th
 _SEGMAPS: dict = {}
+_GENDERS: dict = {}
+
+
+def _session_genders(sid: str) -> dict:
+    """Per-speaker gender by pitch majority vote over their chunks. Cached."""
+    if sid in _GENDERS:
+        return _GENDERS[sid]
+    from services.dub_worker import diarize as _dz
+
+    s = SESSIONS[sid]
+    try:
+        segs = _session_segments(sid)
+    except Exception:
+        segs = []
+    labels = sorted({x["speaker"] for x in segs}) if segs else ["1", "2", "3"]
+    out: dict = {}
+    counts: dict = {}
+    for lab in labels:
+        votes: dict = {}
+        for c in s["chunks"]:
+            mid = (c["start_ms"] + c["end_ms"]) / 2000
+            in_seg = any(x["speaker"] == lab and x["start"] <= mid <= x["end"] for x in segs) if segs else True
+            if not in_seg:
+                continue
+            try:
+                g = _dz.gender_for_wav(c["wav_path"])
+            except Exception:
+                continue
+            if g != "unknown":
+                votes[g] = votes.get(g, 0) + 1
+            if sum(votes.values()) >= 3:
+                break
+        g = max(votes, key=votes.get) if votes else "unknown"
+        out[lab] = {"gender": g, "gindex": counts.get(g, 0)}
+        if g != "unknown":
+            counts[g] = counts.get(g, 0) + 1
+    _GENDERS[sid] = out
+    return out
 
 
 def _session_full_wav(sid: str) -> str:
@@ -201,12 +240,13 @@ def _dub_chunk(sid: str, seq: int) -> str:
             r = transcribe(c["wav_path"], s["source_lang"])
             text = r["text"]
             label = label or r.get("speaker_label") or "1"
+        gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
         tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
         dubbed = Path("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
         _wav = dubbed / f"{seq:04d}_{label}.wav"
         if not _wav.exists():
-            out = synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{seq:04d}_{label}", target_ms=dur_ms)
+            out = synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{seq:04d}_{label}", target_ms=dur_ms, gender=gm["gender"], gindex=gm["gindex"])
         else:
             out = {"wav_path": str(_wav), "mp3_path": str(_wav.with_suffix(".mp3")), "provider": "piper"}
         assemble_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, out["wav_path"], str(seg))

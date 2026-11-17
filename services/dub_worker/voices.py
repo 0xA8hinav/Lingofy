@@ -7,6 +7,18 @@ VOICE_MAP = {
 
 VOICE_DIR = "assets/voices"
 
+# Gender-matched Piper voices. First same-gender speaker gets base, second gets shifted.
+GENDER_VOICES = {
+    "male": {"en": ["en_US-ryan-medium", "en_US-ryan-medium+pitch-shift"],
+             "hi": ["hi_IN-pratham-medium", "hi_IN-pratham-medium+pitch-shift"]},
+    "female": {"en": ["en_US-lessac-medium", "en_US-lessac-medium+pitch-shift"],
+               "hi": ["hi_IN-priyamvada-medium", "hi_IN-priyamvada-medium+pitch-shift2"]},
+}
+
+# Gendered Gemini pools (stable pools; assignment still random within gender).
+GEMINI_MALE = ["Puck", "Charon", "Fenrir", "Orus", "Zephyr"]
+GEMINI_FEMALE = ["Kore", "Aoede", "Leda", "Callirrhoe", "Sulafat"]
+
 # Gemini prebuilt voices pool; each session speaker gets a random one (stable
 # for the session). Hindi-capable neural voices, free tier.
 GEMINI_VOICE_POOL = ["Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda",
@@ -14,14 +26,19 @@ GEMINI_VOICE_POOL = ["Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda",
 _SESSION_VOICES: dict = {}
 
 
-def gemini_voice_for(speaker_label: str) -> str:
+def gemini_voice_for(speaker_label: str, gender: str = "") -> str:
     import random
 
-    if speaker_label not in _SESSION_VOICES:
-        used = set(_SESSION_VOICES.values())
-        free = [v for v in GEMINI_VOICE_POOL if v not in used] or GEMINI_VOICE_POOL
-        _SESSION_VOICES[speaker_label] = random.choice(free)
-    return _SESSION_VOICES[speaker_label]
+    key = (speaker_label, gender or "any")
+    if key not in _SESSION_VOICES:
+        if gender == "male":
+            pool = [v for v in GEMINI_MALE if v not in _SESSION_VOICES.values()] or GEMINI_MALE
+        elif gender == "female":
+            pool = [v for v in GEMINI_FEMALE if v not in _SESSION_VOICES.values()] or GEMINI_FEMALE
+        else:
+            pool = [v for v in GEMINI_VOICE_POOL if v not in _SESSION_VOICES.values()] or GEMINI_VOICE_POOL
+        _SESSION_VOICES[key] = random.choice(pool)
+    return _SESSION_VOICES[key]
 
 
 def gemini_tts(text: str, voice: str, out_wav: str) -> None:
@@ -75,7 +92,10 @@ def _rate_scale(text: str, target_lang: str, target_ms: int) -> float:
     return 1.0
 
 
-def voice_for(speaker_label: str, lang: str) -> str:
+def voice_for(speaker_label: str, lang: str, gender: str = "", gindex: int = 0) -> str:
+    if gender in GENDER_VOICES and lang in GENDER_VOICES[gender]:
+        pool = GENDER_VOICES[gender][lang]
+        return pool[gindex % len(pool)]
     return VOICE_MAP.get(lang, VOICE_MAP["en"]).get(speaker_label, VOICE_MAP["en"]["1"])
 
 
@@ -135,7 +155,7 @@ def _fit_to_target(wav: str, target_ms: int) -> None:
     Path(tmp).replace(wav)
 
 
-def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "data/dubbed", name: str = "", target_ms: int = 0) -> dict:
+def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "data/dubbed", name: str = "", target_ms: int = 0, gender: str = "", gindex: int = 0) -> dict:
     import shutil
     import subprocess
     from pathlib import Path
@@ -144,16 +164,16 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
     base = name or f"{speaker_label}_{abs(hash(text)) % 9999}"
     wav = str(Path(out_dir) / f"{base}.wav")
     mp3 = str(Path(out_dir) / f"{base}.mp3")
-    voice = voice_for(speaker_label, target_lang).split("+")[0]
+    voice = voice_for(speaker_label, target_lang, gender, gindex).split("+")[0]
     model = str(Path(VOICE_DIR) / f"{voice}.onnx")
-    vfull = voice_for(speaker_label, target_lang)
+    vfull = voice_for(speaker_label, target_lang, gender, gindex)
     pitch_factor = 1.12 if vfull.endswith("+pitch-shift") else 0.88 if vfull.endswith("+pitch-shift2") else 0.0
     import os as _os
 
     provider_used = "piper"
     if _os.getenv("LINGOFY_USE_GEMINI_TTS"):
         try:
-            gemini_tts(text, gemini_voice_for(speaker_label), wav)
+            gemini_tts(text, gemini_voice_for(speaker_label, gender), wav)
             provider_used = "gemini-tts"
             if shutil.which("ffmpeg"):
                 uni = str(Path(out_dir) / f"{base}_22k.wav")

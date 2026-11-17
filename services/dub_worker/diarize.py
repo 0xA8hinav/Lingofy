@@ -73,7 +73,29 @@ def _smooth(labels: list[int], width: int = 5) -> list[int]:
     return out
 
 
+def classify_gender(f0_hz: float) -> str:
+    """Male ~85-155Hz, female ~185-255Hz. Narrow deadband -> 'unknown' (falls back to label map)."""
+    if not f0_hz or f0_hz <= 0:
+        return "unknown"
+    if f0_hz < 165:
+        return "male"
+    if f0_hz > 175:
+        return "female"
+    return "unknown"
+
+
+def gender_for_wav(wav_path: str) -> str:
+    with wave.open(wav_path, "rb") as w:
+        n = w.getnframes()
+        raw = w.readframes(n)
+        vals = list(struct.unpack("<" + "h" * (len(raw) // 2), raw)) if raw else [0]
+        return classify_gender(_f0_median(vals, w.getframerate()))
+
+
 def label_chunk(wav_path: str, session_id: str) -> str:
+    e = _embed(wav_path)
+    lab = cluster_session([e])[0]
+    return str(lab)
     e = _embed(wav_path)
     lab = cluster_session([e])[0]
     return str(lab)
