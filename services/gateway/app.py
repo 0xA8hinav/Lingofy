@@ -189,6 +189,13 @@ def manifest(sid: str):
     }
 
 
+@app.get("/v1/cost")
+def cost():
+    from services.dub_worker import costs as _costs
+
+    return _costs.totals()
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return Path(__file__).parent.joinpath("static/index.html").read_text()

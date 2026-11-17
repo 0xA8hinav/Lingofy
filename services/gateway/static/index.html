@@ -8,6 +8,7 @@
 <select id="dir"><option value="en-hi">EN → HI</option><option value="hi-en">HI → EN</option></select>
 <button onclick="go()">Dub</button>
 <div id="st"></div><div id="bar"><div id="fill"></div></div>
+<div id="cost" style="font-size:small;color:#888"></div>
 <video id="v" controls></video>
 <pre id="m"></pre>
 <script>
@@ -31,6 +32,9 @@ async function fetchChunk(n){
 }
 async function playSeq(n){
   const j=await fetchChunk(n);
+  fetch('/v1/cost').then(r=>r.json()).then(c=>{
+    document.getElementById('cost').textContent='spent so far: ₹'+c.chirp_inr+' ('+c.chirp_calls+' Chirp calls, '+c.chirp_audio_min+' min audio)';
+  }).catch(()=>{});
   if(j.done){document.getElementById('st').textContent='done — all '+total+' chunks played';return;}
   const v=document.getElementById('v');
   v.src=j.url+'?t='+Date.now();

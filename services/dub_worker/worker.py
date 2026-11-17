@@ -39,6 +39,19 @@ def transcribe_chirp(wav_path: str, source_lang: str, max_speakers: int = 3) -> 
     words: list = []
     votes: dict = {}
     text_parts = []
+    try:
+        import wave
+
+        with wave.open(wav_path, "rb") as _w:
+            audio_s = _w.getnframes() / (_w.getframerate() or 1)
+    except Exception:
+        audio_s = 0.0
+    try:
+        from services.dub_worker import costs as _costs
+
+        _costs.record("chirp", audio_s, Path(wav_path).name)
+    except Exception:
+        pass
     for r in resp.results:
         alt = r.alternatives[0]
         text_parts.append(alt.transcript)
