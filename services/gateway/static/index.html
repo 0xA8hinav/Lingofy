@@ -31,7 +31,10 @@ async function poll(){
   const st=await (await fetch('/v1/sessions/'+sid+'/status')).json();
   const pct=st.chunks_total?Math.round(100*st.chunks_done/st.chunks_total):0;
   document.getElementById('fill').style.width=pct+'%';
-  document.getElementById('st').textContent=st.error?('error: '+st.error):('buffering… '+st.chunks_done+'/'+st.chunks_total+(st.elapsed_s?(' — done in '+st.elapsed_s+'s':' — full video plays when done')));
+  let msg;
+  if (st.error) { msg='error: '+st.error; }
+  else { msg='buffering… '+st.chunks_done+'/'+st.chunks_total; if (st.elapsed_s) { msg+=' — done in '+st.elapsed_s+'s'; } else { msg+=' — full video plays when done'; } }
+  document.getElementById('st').textContent=msg;
   fetch('/v1/cost').then(r=>r.json()).then(c=>{
     document.getElementById('cost').textContent='spent so far: ₹'+c.chirp_inr+' ('+c.chirp_calls+' Chirp calls, '+c.chirp_audio_min+' min audio)';
   }).catch(()=>{});

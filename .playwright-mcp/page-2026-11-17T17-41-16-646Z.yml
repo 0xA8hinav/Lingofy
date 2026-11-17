@@ -1,0 +1,13 @@
+- generic [active] [ref=e1]:
+  - heading "Lingofy dub test" [level=1] [ref=e2]
+  - paragraph [ref=e3]: Upload mp4/mov/webm, pick direction, Dub. Buffers into one full video, then plays straight through.
+  - button "Choose File" [ref=e4]
+  - combobox [ref=e5]:
+    - option "EN → HI" [selected]
+    - option "HI → EN"
+  - button "Dub" [ref=e6]
+  - generic [ref=e8]:
+    - generic [ref=e9]:
+      - checkbox "Dubbed audio" [checked] [ref=e10]
+      - text: Dubbed audio
+    - text: (uncheck for original audio)

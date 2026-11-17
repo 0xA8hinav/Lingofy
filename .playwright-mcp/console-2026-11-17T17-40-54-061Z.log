@@ -1,0 +1,3 @@
+[     145ms] Unexpected token ':'
+[   22076ms] ReferenceError: go is not defined
+    at HTMLButtonElement.onclick (http://127.0.0.1:8090/:9:24)
