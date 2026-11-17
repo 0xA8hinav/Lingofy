@@ -202,12 +202,15 @@ def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> 
     for key in keys:
         try:
             client = genai.Client(api_key=key)
+            from google.genai import types as _t
+
             resp = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=[
                     _prompt(total_s),
-                    types.Part.from_bytes(data=data, mime_type="audio/wav"),
+                    _t.Part.from_bytes(data=data, mime_type="audio/wav"),
                 ],
+                config=_t.GenerateContentConfig(max_output_tokens=9000),
             )
             text = (resp.text or "").strip().strip("`")
             if text.lower().startswith("json"):

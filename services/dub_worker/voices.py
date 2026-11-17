@@ -5,6 +5,9 @@ VOICE_MAP = {
            "4": "hi_IN-priyamvada-medium+pitch-shift", "5": "hi_IN-pratham-medium+pitch-shift2", "6": "hi_IN-priyamvada-medium+pitch-shift2"},
 }
 
+VOICE_DIR = "assets/voices"
+
+
 # Natural speaking rate per language at length-scale 1.0 (measured, chars/sec).
 # Instead of robotic post-stretch, we set Piper's --length-scale from the
 # text density for the slot: short text -> slow down, dense text -> speed up.
@@ -94,8 +97,10 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
     try:
         if not Path(model).exists():
             raise FileNotFoundError(model)
+        scale = _rate_scale(text, target_lang, target_ms)
         subprocess.run(
-            ["python3", "-m", "piper", "--model", model, "--output-file", wav],
+            ["python3", "-m", "piper", "--model", model, "--output-file", wav,
+             "--length-scale", f"{scale:.3f}"],
             input=text.encode(), check=True, capture_output=True, timeout=60,
         )
         if pitch_factor and shutil.which("ffmpeg"):
