@@ -83,7 +83,12 @@ def _run_dub(sid: str):
                 if not label:
                     label = _gd.speaker_at(segs, c["start_ms"] / 1000)
                 if not text:
-                    return c["seq"]
+                    # transcript cache missing (e.g. quota) -> per-chunk offline STT fallback
+                    from services.dub_worker.worker import transcribe as _tx
+
+                    r = _tx(c["wav_path"], s["source_lang"])
+                    text = r["text"]
+                    label = label or r.get("speaker_label") or "1"
                 gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
                 tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
                 dur_ms = c["end_ms"] - c["start_ms"]
@@ -97,6 +102,9 @@ def _run_dub(sid: str):
             for _ in ex.map(_one, chunks):
                 done += 1
                 SESSIONS[sid]["chunks_done"] = done
+        got = len(sorted(dubbed.glob("*.wav")))
+        if got < len(chunks) // 2:
+            raise RuntimeError(f"only {got}/{len(chunks)} chunks dubbed — transcript unavailable, retry later")
         assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid),
                          chunks_total=len(chunks), src_video=s["src"])
         SESSIONS[sid]["video_url"] = f"/output/{sid}/dubbed_{s['target_lang']}.mp4"
@@ -157,16 +165,21 @@ def _session_genders(sid: str) -> dict:
 
 
 def _session_full_wav(sid: str) -> str:
-    """Concat session chunks into one 16k mono wav (built once, reused)."""
+    """Concat session chunks into one 16k mono wav (built once, reused).
+
+    Lives OUTSIDE dubbed/ on purpose: assemble globs that dir for per-chunk
+    wavs, and the full source must never be picked up as dubbed output.
+    """
     import subprocess
 
     from pathlib import Path as _P
 
     s = SESSIONS[sid]
-    full_wav = _P("data") / "dubbed" / sid / "_full16k.wav"
-    full_wav.parent.mkdir(parents=True, exist_ok=True)
+    work = _P("data") / "work" / sid
+    work.mkdir(parents=True, exist_ok=True)
+    full_wav = work / "_full16k.wav"
     if not full_wav.exists():
-        lst = full_wav.with_suffix(".txt")
+        lst = work / "concat.txt"
         lst.write_text("".join(f"file '{_P(c['wav_path']).resolve()}'\n" for c in s["chunks"]))
         subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
                         "-ac", "1", "-ar", "16000", str(full_wav)], check=True, capture_output=True)
