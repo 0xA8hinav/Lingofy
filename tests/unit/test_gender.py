@@ -9,6 +9,13 @@ def test_gender_splits_male_female():
     assert classify_gender(0.0) == "unknown"
 
 
+def test_gender_nn_both_voices():
+    from services.dub_worker.diarize import classify_gender_nn
+
+    assert classify_gender_nn("/tmp/opencode/gt/2_14.wav") == "female"
+    assert classify_gender_nn("/tmp/opencode/gt/2_634.wav") == "male"
+
+
 def test_gender_matched_voices():
     assert voice_for("9", "en", "male", 0) == "en_US-ryan-medium"
     assert voice_for("9", "en", "female", 0) == "en_US-lessac-medium"

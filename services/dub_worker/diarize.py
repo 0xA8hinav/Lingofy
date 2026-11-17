@@ -84,6 +84,31 @@ def classify_gender(f0_hz: float) -> str:
     return "unknown"
 
 
+_GENDER_CLF = None
+
+
+def classify_gender_nn(wav_path: str) -> str:
+    """Neural gender check: wav2vec2 gender model, 1 sample per speaker.
+
+    Free, local after first download. Returns male/female/unknown.
+    """
+    global _GENDER_CLF
+    try:
+        if _GENDER_CLF is None:
+            from transformers import pipeline as _pl
+
+            _GENDER_CLF = _pl("audio-classification",
+                              model="alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech")
+        out = _GENDER_CLF(wav_path)
+        top = max(out, key=lambda x: x["score"])
+        if top["score"] < 0.7:
+            return "unknown"
+        lab = top["label"].lower()
+        return "male" if "male" in lab and "female" not in lab else "female" if "female" in lab else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def gender_for_wav(wav_path: str) -> str:
     with wave.open(wav_path, "rb") as w:
         n = w.getnframes()

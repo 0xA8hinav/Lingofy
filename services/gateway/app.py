@@ -133,13 +133,14 @@ def _session_genders(sid: str) -> dict:
             if not in_seg:
                 continue
             try:
-                g = _dz.gender_for_wav(c["wav_path"])
+                g = _dz.classify_gender_nn(c["wav_path"])  # 1 sample check
+                if g == "unknown":
+                    g = _dz.gender_for_wav(c["wav_path"])  # pitch fallback
             except Exception:
-                continue
+                g = "unknown"
             if g != "unknown":
                 votes[g] = votes.get(g, 0) + 1
-            if sum(votes.values()) >= 3:
-                break
+                break  # one confident sample per speaker is enough
         g = max(votes, key=votes.get) if votes else "unknown"
         out[lab] = {"gender": g, "gindex": counts.get(g, 0)}
         if g != "unknown":
