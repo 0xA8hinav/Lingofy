@@ -60,7 +60,41 @@ def diarize_file(audio_path: str, total_s: float) -> list:
                 n = "".join(ch for ch in spk if ch.isdigit()) or "1"
                 out.append({"start": float(s["start"]), "end": float(s["end"]),
                             "speaker": str(min(max(int(n), 1), 3))})
-            return sorted(out, key=lambda x: x["start"])
+            segs = sorted(out, key=lambda x: x["start"])
+            # 3.5-lite finds boundaries but often returns one label: identity via local ECAPA
+            if len(segs) > 1 and len({s["speaker"] for s in segs}) == 1:
+                try:
+                    from services.dub_worker import ecapa as _ec
+                    import tempfile
+                    import wave
+
+                    with wave.open(audio_path, "rb") as _w:
+                        _sr, _n = _w.getframerate(), _w.getnframes()
+                        _raw = _w.readframes(_n)
+                    import struct as _st
+
+                    _vals = _st.unpack("<" + "h" * (len(_raw) // 2), _raw) if _raw else (0,)
+                    _tmp = Path(tempfile.mkdtemp(prefix="segspk"))
+                    _paths = []
+                    for _i, _s in enumerate(segs):
+                        _a = max(0, int(_s["start"] * _sr))
+                        _b = min(len(_vals), int(_s["end"] * _sr))
+                        _mid = (_a + _b) // 2
+                        _half = min(2 * _sr, (_b - _a) // 2)
+                        _cut = _vals[_mid - _half:_mid + _half] or _vals[_a:_b]
+                        _p = str(_tmp / f"seg{_i}.wav")
+                        with wave.open(_p, "wb") as _o:
+                            _o.setnchannels(1)
+                            _o.setsampwidth(2)
+                            _o.setframerate(_sr)
+                            _o.writeframes(_st.pack("<" + "h" * len(_cut), *_cut))
+                        _paths.append(_p)
+                    _map = _ec.session_map(_paths)
+                    for _s, _p in zip(segs, _paths):
+                        _s["speaker"] = _map[_p]
+                except Exception:
+                    pass
+            return segs
         except Exception as e:
             last_err = e
             time.sleep(2)
