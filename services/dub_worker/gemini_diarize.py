@@ -61,9 +61,92 @@ def diarize_file(audio_path: str, total_s: float) -> list:
     Falls back to the 2.5-flash JSON prompt if the transcribe API is unavailable.
     """
     try:
-        return _diarize_transcribe_api(audio_path)
+        return _diarize_long(audio_path, total_s)
     except Exception as e:
         return _diarize_json_prompt(audio_path, total_s, e)
+
+
+def _diarize_long(audio_path: str, total_s: float, part_s: float = 180.0) -> list:
+    """Split long audio into parts (API timeouts), diarize each, reconcile IDs."""
+    import subprocess
+    import tempfile
+    import wave
+
+    with wave.open(audio_path, "rb") as _w:
+        _sr, _n = _w.getframerate(), _w.getnframes()
+        _raw = _w.readframes(_n)
+    import struct as _st
+
+    _vals = _st.unpack("<" + "h" * (len(_raw) // 2), _raw) if _raw else (0,)
+    dur = len(_vals) / max(1, _sr)
+    if dur <= part_s + 30:
+        return _diarize_transcribe_api(audio_path)
+    tmp = Path(tempfile.mkdtemp(prefix="dzpart"))
+    all_segs, reps = [], []
+    off = 0.0
+    idx = 0
+    while off < dur:
+        a, b = int(off * _sr), int(min(dur, off + part_s) * _sr)
+        pp = str(tmp / f"part{idx}.wav")
+        with wave.open(pp, "wb") as _o:
+            _o.setnchannels(1)
+            _o.setsampwidth(2)
+            _o.setframerate(_sr)
+            _o.writeframes(_st.pack("<" + "h" * max(0, b - a), *_vals[a:b]))
+        try:
+            psegs = _diarize_transcribe_api(pp)
+        except Exception:
+            psegs = [{"start": 0.0, "end": b / _sr - a / _sr, "speaker": "1"}]
+        for s in psegs:
+            s["start"] += off
+            s["end"] += off
+            all_segs.append(s)
+            mid = (s["start"] + s["end"]) / 2
+            reps.append((s["speaker"], idx, mid))
+        off += part_s
+        idx += 1
+    # reconcile part-local IDs -> global via ECAPA on segment centers
+    try:
+        from services.dub_worker import ecapa as _ec
+        import numpy as _np
+
+        wavs = []
+        for _i, s in enumerate(all_segs):
+            _m = int((s["start"] + s["end"]) / 2 * _sr)
+            _h = min(2 * _sr, int((s["end"] - s["start"]) / 2 * _sr) or 2 * _sr)
+            _cut = _vals[max(0, _m - _h):_m + _h]
+            _p = str(tmp / f"seg{_i}.wav")
+            with wave.open(_p, "wb") as _o:
+                _o.setnchannels(1)
+                _o.setsampwidth(2)
+                _o.setframerate(_sr)
+                _o.writeframes(_st.pack("<" + "h" * len(_cut), *_cut))
+            wavs.append(_p)
+        _map = _ec.session_map(wavs)
+        for s, _p in zip(all_segs, wavs):
+            s["speaker"] = _map[_p]
+    except Exception:
+        pass
+    # merge per-part word caches into one full-audio transcript cache
+    try:
+        import json as _js
+
+        merged = []
+        _off = 0.0
+        for _i in range(idx):
+            _cf = _tkey(str(tmp / f"part{_i}.wav"))
+            if _cf.exists():
+                for _w in _js.loads(_cf.read_text()):
+                    _w["start"] += _off
+                    _w["end"] += _off
+                    merged.append(_w)
+            _off += part_s
+        if merged:
+            TCACHE.mkdir(parents=True, exist_ok=True)
+            _tkey(audio_path).write_text(_js.dumps(merged))
+    except Exception:
+        pass
+    return sorted(all_segs, key=lambda x: x["start"])
 
 
 def _diarize_transcribe_api(audio_path: str) -> list:
