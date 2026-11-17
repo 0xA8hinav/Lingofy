@@ -5,7 +5,19 @@ VOICE_MAP = {
            "4": "hi_IN-priyamvada-medium+pitch-shift", "5": "hi_IN-pratham-medium+pitch-shift2", "6": "hi_IN-priyamvada-medium+pitch-shift2"},
 }
 
-VOICE_DIR = "assets/voices"
+# Natural speaking rate per language at length-scale 1.0 (measured, chars/sec).
+# Instead of robotic post-stretch, we set Piper's --length-scale from the
+# text density for the slot: short text -> slow down, dense text -> speed up.
+RATE_CHS = {"hi": 15.6, "en": 18.6}
+
+
+def _rate_scale(text: str, target_lang: str, target_ms: int) -> float:
+    if not target_ms or target_ms <= 0 or not text.strip():
+        return 1.0
+    rate = RATE_CHS.get(target_lang[:2], 16.0)
+    natural_s = len(text) / rate
+    scale = natural_s / (target_ms / 1000)
+    return min(1.6, max(0.7, scale))
 
 
 def voice_for(speaker_label: str, lang: str) -> str:
