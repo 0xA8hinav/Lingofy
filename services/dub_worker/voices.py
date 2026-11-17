@@ -182,10 +182,10 @@ def _fit_to_target(wav: str, target_ms: int) -> None:
     got = _wav_ms(wav)
     if got <= 0:
         return
-    if abs(got - target_ms) <= max(400, target_ms * 0.05):
+    if got == target_ms:
         return
     if got < target_ms:
-        pad_s = (target_ms - got) / 1000
+        # pad trailing silence to the EXACT slot: no gaps, no drift
         tmp = str(Path(wav).with_suffix(".pad.wav"))
         subprocess.run(
             ["ffmpeg", "-y", "-i", wav, "-af", f"apad=whole_dur={target_ms / 1000:.3f}",
@@ -200,7 +200,13 @@ def _fit_to_target(wav: str, target_ms: int) -> None:
         ["ffmpeg", "-y", "-i", wav, "-filter:a", f"atempo={tempo:.3f}", tmp],
         check=True, capture_output=True,
     )
-    Path(tmp).replace(wav)
+    # exact length guaranteed: trim any atempo rounding residue
+    tmp2 = str(Path(wav).with_suffix(".exact.wav"))
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", tmp, "-t", f"{target_ms / 1000:.3f}", tmp2],
+        check=True, capture_output=True,
+    )
+    Path(tmp2).replace(wav)
 
 
 def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "data/dubbed", name: str = "", target_ms: int = 0, gender: str = "", gindex: int = 0) -> dict:
@@ -249,13 +255,9 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
             )
             Path(shifted).replace(wav)
         _fit_to_target(wav, target_ms)
-        if shutil.which("ffmpeg"):
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", wav, "-codec:a", "libmp3lame", "-q:a", "4", mp3],
-                check=True, capture_output=True,
-            )
-        else:
-            mp3 = wav
+        # NOTE: no per-chunk mp3 encode — the mux chain stays wav end to end
+        # (mp3 gapless padding was adding boundary clicks). mp3 path kept
+        # for API compat only.
         return {"mp3_path": mp3, "wav_path": wav, "provider": provider_used}
     except Exception:
         Path(mp3).write_bytes(b"ID3" + text.encode()[:100] + b"\x00" * 100)
