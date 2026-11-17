@@ -21,7 +21,32 @@ def _keys() -> list:
         return [k] if k else []
 
 
+_key_cursor = 0
+
+
+def _ordered_keys() -> list:
+    """Round-robin key order; spreads quota usage instead of hammering key[0]."""
+    global _key_cursor
+    keys = _keys()
+    if not keys:
+        return []
+    start = _key_cursor % len(keys)
+    _key_cursor += 1
+    return keys[start:] + keys[:start]
+
+
+def _is_quota_error(e: Exception) -> bool:
+    s = str(e).lower()
+    return "429" in s or "quota" in s or "exhaust" in s or "rate" in s
+
+
 def _prompt(total_s: float) -> str:
+    return (
+        "Identify ALL distinct speakers in this audio, however many there are. "
+        "Return ONLY a JSON array like "
+        '[{"start":0.0,"end":8.5,"speaker":"SPEAKER_1"}]. '
+        f"Cover the full {total_s:.0f} seconds with no gaps."
+    )
     return (
         "Identify ALL distinct speakers in this audio, however many there are. "
         "Return ONLY a JSON array like "
@@ -44,7 +69,7 @@ def diarize_file(audio_path: str, total_s: float) -> list:
 def _diarize_transcribe_api(audio_path: str) -> list:
     from google import genai
 
-    keys = _keys()
+    keys = _ordered_keys()
     if not keys:
         raise RuntimeError("no gemini keys")
     last_err = None
@@ -78,7 +103,7 @@ def _diarize_transcribe_api(audio_path: str) -> list:
             return _words_to_segments(words)
         except Exception as e:
             last_err = e
-            time.sleep(2)
+            time.sleep(0.5 if _is_quota_error(e) else 2)
             continue
     raise RuntimeError(f"transcribe api failed on all keys: {last_err}")
 
@@ -167,14 +192,14 @@ def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> 
     from google import genai
     from google.genai import types
 
-    keys = _keys()
+    keys = _ordered_keys()
     if not keys:
         raise RuntimeError("no gemini keys")
     data = Path(audio_path).read_bytes()
     if len(data) > 18 * 1024 * 1024:
         raise ValueError("audio too large for inline; split first")
     last_err = None
-    for i, key in enumerate(keys):
+    for key in keys:
         try:
             client = genai.Client(api_key=key)
             resp = client.models.generate_content(
@@ -231,7 +256,7 @@ def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> 
             return segs
         except Exception as e:
             last_err = e
-            time.sleep(2)
+            time.sleep(0.5 if _is_quota_error(e) else 2)
             continue
     raise RuntimeError(f"gemini diarization failed on all keys: {last_err}")
 
