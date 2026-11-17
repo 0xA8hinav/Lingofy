@@ -104,6 +104,13 @@ def cost_cents(chars: int, provider: str) -> float:
 
 
 def translate(text: str, source_lang: str, target_lang: str) -> dict:
+    if (source_lang, target_lang) in (("en", "hi"), ("hi", "en")):
+        try:
+            out = _translate_gemini(text, source_lang, target_lang)
+            if out:
+                return {"target_text": out, "chars_billed": 0}
+        except Exception:
+            pass
     try:
         import argostranslate.translate as T
 
@@ -113,6 +120,47 @@ def translate(text: str, source_lang: str, target_lang: str) -> dict:
     except Exception:
         pass
     return {"target_text": f"[{target_lang}] {text}", "chars_billed": len(text)}
+
+
+_GT_CURSOR = 0
+
+
+def _translate_gemini(text: str, source_lang: str, target_lang: str) -> str:
+    """Colloquial MT via Gemini 3.5 Flash Lite (free tier, rotated keys).
+
+    Keeps word count close to the original so dubbed audio fits the slot.
+    """
+    global _GT_CURSOR
+    import json as _js
+
+    from google import genai
+
+    keys = _js.load(open("/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json"))["keys"]
+    if source_lang == "hi":
+        task = ("Translate this Hindi into simple everyday spoken English, plain words. "
+                "Keep roughly the SAME NUMBER OF WORDS as the original. "
+                "Output ONLY the English translation, nothing else:\n\n" + text)
+    else:
+        task = ("Translate this English into simple everyday spoken Hindi in DEVANAGARI script only "
+                "(no Roman letters). Use bolt-chaal Hindi like friends talking. "
+                "Avoid heavy Shuddh Hindi or bookish words. "
+                "Keep roughly the SAME NUMBER OF WORDS as the original English. "
+                "Output ONLY the Hindi translation, nothing else:\n\n" + text)
+    last = None
+    for i in range(len(keys)):
+        _GT_CURSOR = (_GT_CURSOR + 1) % len(keys)
+        try:
+            client = genai.Client(api_key=keys[_GT_CURSOR])
+            r = client.models.generate_content(model="gemini-3.5-flash-lite", contents=task)
+            out = (r.text or "").strip().strip("`").strip()
+            if out.lower().startswith("hindi"):
+                out = out.split("\n", 1)[-1].strip()
+            if out:
+                return out
+        except Exception as e:
+            last = e
+            continue
+    raise RuntimeError(f"gemini translate failed: {last}")
 
 
 def _wav_ms(path: str) -> int:
