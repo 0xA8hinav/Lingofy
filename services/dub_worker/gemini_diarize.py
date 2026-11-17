@@ -150,7 +150,7 @@ def _diarize_long(audio_path: str, total_s: float, part_s: float = 180.0) -> lis
 
 
 def _diarize_transcribe_api(audio_path: str) -> list:
-    from google import genai
+    from google.genai import interactions as I
 
     keys = _ordered_keys()
     if not keys:
@@ -158,21 +158,23 @@ def _diarize_transcribe_api(audio_path: str) -> list:
     last_err = None
     for key in keys:
         try:
+            from google import genai
+
             client = genai.Client(api_key=key)
             up = client.files.upload(file=audio_path)
+            uri = getattr(up, "uri", None) or getattr(up, "name", "")
             resp = client.interactions.create(
                 model="gemini-3.5-transcribe",
-                input=[up],
-                generation_config={
-                    "transcription_config": {
-                        "language_codes": [],
-                        "mode": {
-                            "type": "verbatim",
-                            "diarization_mode": "speaker",
-                            "timestamp_granularities": ["word"],
-                        },
-                    }
-                },
+                input=[I.UserInputStep(content=[I.AudioContent(uri=uri, mime_type="audio/wav")])],
+                generation_config=I.GenerationConfig(
+                    transcription_config=I.TranscriptionConfig(
+                        language_codes=[],
+                        mode=I.VerbatimTranscriptionMode(
+                            diarization_mode="speaker",
+                            timestamp_granularities=["word"],
+                        ),
+                    )
+                ),
             )
             words = []
             for step in getattr(resp, "steps", []) or []:
@@ -180,6 +182,8 @@ def _diarize_transcribe_api(audio_path: str) -> list:
                     for a in getattr(content, "annotations", []) or []:
                         if getattr(a, "type", None) == "word_info":
                             words.append(a)
+            if not words:
+                words = _extract_words(resp)
             if not words:
                 raise ValueError("no word annotations returned")
             _save_transcript_cache(audio_path, words)
@@ -189,6 +193,69 @@ def _diarize_transcribe_api(audio_path: str) -> list:
             time.sleep(0.5 if _is_quota_error(e) else 2)
             continue
     raise RuntimeError(f"transcribe api failed on all keys: {last_err}")
+
+
+def _extract_words(resp) -> list:
+    """Fallback word extraction across response shapes (preview API churn)."""
+    import json as _js
+
+    found = []
+    seen = set()
+
+    def _walk(o):
+        oid = id(o)
+        if oid in seen or len(found) > 20000:
+            return
+        seen.add(oid)
+        if isinstance(o, dict):
+            t = o.get("type") or o.get("@type") or ""
+            if t == "word_info" or ("word" in o and ("start_offset" in o or "startOffset" in o or "start" in o)):
+                found.append(o)
+                return
+            for v in o.values():
+                _walk(v)
+        elif isinstance(o, (list, tuple)):
+            for v in o:
+                _walk(v)
+        else:
+            for attr in ("steps", "content", "annotations", "parts"):
+                try:
+                    v = getattr(o, attr, None)
+                except Exception:
+                    v = None
+                if v is not None:
+                    _walk(v)
+                    break
+            else:
+                try:
+                    d = o.model_dump()
+                except Exception:
+                    return
+                _walk(d)
+
+    try:
+        _walk(resp)
+    except Exception:
+        pass
+    out = []
+    for w in found:
+        if isinstance(w, dict):
+            out.append(_dict_word(w))
+    return out
+
+
+def _dict_word(w: dict):
+    class _W:
+        pass
+
+    o = _W()
+    o.word = w.get("word") or w.get("text", "")
+    o.start_offset = w.get("start_offset", w.get("startOffset", w.get("start", 0)))
+    o.end_offset = w.get("end_offset", w.get("endOffset", w.get("end", 0)))
+    spk = w.get("speaker", "")
+    o.speaker = spk.get("id", spk) if isinstance(spk, dict) else spk
+    o.type = "word_info"
+    return o
 
 
 def _tkey(audio_path: str) -> Path:
