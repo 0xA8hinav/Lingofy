@@ -90,6 +90,9 @@ def _run_dub(sid: str):
                     text = r["text"]
                     label = label or r.get("speaker_label") or "1"
                 gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
+                _wav = dubbed / f"{c['seq']:04d}_{label}.wav"
+                if _wav.exists():
+                    return c["seq"]  # already dubbed via chunk path; skip duplicate synth
                 tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
                 dur_ms = c["end_ms"] - c["start_ms"]
                 synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{c['seq']:04d}_{label}", target_ms=dur_ms, gender=gm["gender"], gindex=gm["gindex"])
