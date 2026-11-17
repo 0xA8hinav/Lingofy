@@ -160,12 +160,13 @@ def _diarize_transcribe_api(audio_path: str) -> list:
         try:
             from google import genai
 
-            client = genai.Client(api_key=key)
+            client = genai.Client(api_key=key, http_options={"api_version": "v1beta"})
             up = client.files.upload(file=audio_path)
             uri = getattr(up, "uri", None) or getattr(up, "name", "")
+            mime = getattr(up, "mime_type", None) or "audio/wav"
             resp = client.interactions.create(
                 model="gemini-3.5-transcribe",
-                input=[I.UserInputStep(content=[I.AudioContent(uri=uri, mime_type="audio/wav")])],
+                input=[I.UserInputStep(content=[I.AudioContent(uri=uri, mime_type=mime)])],
                 generation_config=I.GenerationConfig(
                     transcription_config=I.TranscriptionConfig(
                         language_codes=[],
@@ -276,18 +277,30 @@ def _save_transcript_cache(audio_path: str, words) -> None:
         TCACHE.mkdir(parents=True, exist_ok=True)
         out = []
         for w in words:
+            if isinstance(w, dict):
+                wd = w.get("word") or w.get("text", "")
+                spk = w.get("speaker", "")
+            else:
+                wd = getattr(w, "text", "")
+                spk = getattr(w, "speaker", "")
             s, e = _off(w, "start_offset"), _off(w, "end_offset")
-            out.append({"word": getattr(w, "text", ""), "start": s, "end": e,
-                        "speaker": str(getattr(w, "speaker", "") or "")})
+            out.append({"word": wd, "start": s, "end": e, "speaker": str(spk or "")})
         _tkey(audio_path).write_text(json.dumps(out))
     except Exception:
         pass
 
 
 def _off(w, attr: str) -> float:
-    v = getattr(w, attr, None)
+    v = w.get(attr) if isinstance(w, dict) else getattr(w, attr, None)
     try:
-        return float(v.total_seconds()) if hasattr(v, "total_seconds") else float(v or 0)
+        if hasattr(v, "total_seconds"):
+            return float(v.total_seconds())
+        if isinstance(v, str):
+            v = v.strip()
+            if v.endswith("s"):
+                v = v[:-1]
+            return float(v)
+        return float(v or 0)
     except Exception:
         return 0.0
 
@@ -304,8 +317,12 @@ def chunk_text(audio_path: str, start_s: float, end_s: float):
     text = " ".join(w["word"] for w in use).strip()
     votes: dict = {}
     for w in use:
-        n = "".join(ch for ch in str(w.get("speaker", "")) if ch.isdigit()) or "1"
-        lab = str(min(max(int(n), 1), 6))
+        raw = str(w.get("speaker", ""))
+        digs = "".join(ch for ch in raw if ch.isdigit())
+        n = int(digs) if digs else 1
+        if raw.startswith("spk:"):
+            n += 1
+        lab = str(min(max(n, 1), 6))
         votes[lab] = votes.get(lab, 0) + (w["end"] - w["start"])
     speaker = max(votes, key=votes.get)
     return text, speaker
@@ -317,16 +334,18 @@ def _words_to_segments(words: list) -> list:
     segs, cur = [], None
     for w in words:
         raw = str(getattr(w, "speaker", "") or "")
-        n = "".join(ch for ch in raw if ch.isdigit()) or "1"
-        lab = str(min(max(int(n), 1), 8))
+        digs = "".join(ch for ch in raw if ch.isdigit())
+        n = int(digs) if digs else 1
+        if raw.startswith("spk:"):
+            n += 1  # spk:0-based -> 1-based
+        lab = str(min(max(n, 1), 8))
         if lab not in order:
             order[lab] = str(len(order) + 1)
         lab = order[lab]
-        start = getattr(w, "start_offset", None)
-        end = getattr(w, "end_offset", None)
+        start = _off(w, "start_offset")
+        end = _off(w, "end_offset")
         try:
-            s = float(start.total_seconds()) if hasattr(start, "total_seconds") else float(start or 0)
-            e = float(end.total_seconds()) if hasattr(end, "total_seconds") else float(end or 0)
+            s, e = float(start), float(end)
         except Exception:
             s, e = 0.0, 0.0
         if cur and cur["speaker"] == lab:
@@ -351,7 +370,7 @@ def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> 
     last_err = None
     for key in keys:
         try:
-            client = genai.Client(api_key=key)
+            client = genai.Client(api_key=key, http_options={"api_version": "v1beta"})
             from google.genai import types as _t
 
             resp = client.models.generate_content(
