@@ -72,7 +72,19 @@ def _session_segments(sid: str) -> list:
     from services.dub_worker import gemini_diarize as _gd
 
     s = SESSIONS[sid]
-    cache = _gd.CACHE / f"{sid}.json"
+    chunks = s["chunks"]
+    # content-hash cache: re-uploads of the same video reuse the map, $0
+    import hashlib
+
+    h = hashlib.sha1()
+    try:
+        with open(s["src"], "rb") as _f:
+            h.update(_f.read(1 << 20))
+            _f.seek(max(0, Path(s["src"]).stat().st_size - (1 << 20)))
+            h.update(_f.read(1 << 20))
+    except Exception:
+        h.update(sid.encode())
+    cache = _gd.CACHE / f"{h.hexdigest()}.json"
     if cache.exists():
         try:
             segs = json.loads(cache.read_text())
