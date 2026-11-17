@@ -148,17 +148,23 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
     model = str(Path(VOICE_DIR) / f"{voice}.onnx")
     vfull = voice_for(speaker_label, target_lang)
     pitch_factor = 1.12 if vfull.endswith("+pitch-shift") else 0.88 if vfull.endswith("+pitch-shift2") else 0.0
-    try:
-        gemini_tts(text, gemini_voice_for(speaker_label), wav)
-        provider_used = "gemini-tts"
-        if shutil.which("ffmpeg"):
-            uni = str(Path(out_dir) / f"{base}_22k.wav")
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", wav, "-ar", "22050", "-ac", "1", uni],
-                check=True, capture_output=True,
-            )
-            Path(uni).replace(wav)
-    except Exception:
+    import os as _os
+
+    provider_used = "piper"
+    if _os.getenv("LINGOFY_USE_GEMINI_TTS"):
+        try:
+            gemini_tts(text, gemini_voice_for(speaker_label), wav)
+            provider_used = "gemini-tts"
+            if shutil.which("ffmpeg"):
+                uni = str(Path(out_dir) / f"{base}_22k.wav")
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", wav, "-ar", "22050", "-ac", "1", uni],
+                    check=True, capture_output=True,
+                )
+                Path(uni).replace(wav)
+        except Exception:
+            provider_used = "piper"
+    if provider_used == "piper" and not Path(wav).exists():
         if not Path(model).exists():
             raise FileNotFoundError(model)
         subprocess.run(
@@ -166,7 +172,6 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
              "--length-scale", "1.000"],
             input=text.encode(), check=True, capture_output=True, timeout=60,
         )
-        provider_used = "piper"
     try:
         if pitch_factor and shutil.which("ffmpeg"):
             shifted = str(Path(out_dir) / f"{base}_shift.wav")
