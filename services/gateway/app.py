@@ -204,7 +204,11 @@ def _dub_chunk(sid: str, seq: int) -> str:
         tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
         dubbed = Path("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
-        out = synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{seq:04d}_{label}", target_ms=dur_ms)
+        _wav = dubbed / f"{seq:04d}_{label}.wav"
+        if not _wav.exists():
+            out = synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{seq:04d}_{label}", target_ms=dur_ms)
+        else:
+            out = {"wav_path": str(_wav), "mp3_path": str(_wav.with_suffix(".mp3")), "provider": "piper"}
         assemble_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, out["wav_path"], str(seg))
         SESSIONS[sid]["chunks_done"] = max(s.get("chunks_done", 0), seq + 1)
         return f"/output/{sid}/{seg.name}"
@@ -235,7 +239,7 @@ def start_dub(sid: str, bg: BackgroundTasks):
 
 @app.post("/v1/sessions/{sid}/video")
 async def upload_video(
-    sid: str, file: UploadFile = File(...), x_mock_size: int | None = Header(default=None)
+    sid: str, bg: BackgroundTasks, file: UploadFile = File(...), x_mock_size: int | None = Header(default=None)
 ):
     if sid not in SESSIONS:
         SESSIONS[sid] = {"source_lang": "en", "target_lang": "hi", "chunks_total": 0, "chunks_done": 0}
@@ -286,7 +290,18 @@ async def upload_video(
     SESSIONS[sid]["chunks_total"] = len(chunks)
     SESSIONS[sid]["chunks"] = chunks
     SESSIONS[sid]["src"] = str(tmp_file)
+    # warm the file-level transcript+speaker map now, so chunk 0 dubs in seconds
+    bg.add_task(_session_full_wav, sid)
+    bg.add_task(_warm_maps, sid)
     return {"chunks_total": len(chunks)}
+
+
+def _warm_maps(sid: str):
+    # one Gemini call warms both speaker map and transcript cache
+    try:
+        _session_segments(sid)
+    except Exception:
+        pass
 
 
 @app.get("/v1/sessions/{sid}/status")
