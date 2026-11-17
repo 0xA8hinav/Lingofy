@@ -73,7 +73,8 @@ def assemble_mse_chunk(src_video: str, start_s: float, dur_s: float, dubbed_wav:
         subprocess.run(
             ["ffmpeg", "-y", "-ss", str(start_s), "-t", str(dur_s), "-i", src_video,
              "-i", dubbed_wav, "-map", "0:v:0", "-map", "1:a:0",
-             "-c:v", "mpeg4", "-b:v", "1000k", "-c:a", "aac", "-ar", "44100", "-ac", "2",
+             "-c:v", "libopenh264", "-b:v", "1200k", "-g", "240",
+             "-c:a", "aac", "-ar", "44100", "-ac", "2",
              "-movflags", "empty_moov+default_base_moof+frag_keyframe",
              "-frag_duration", "8000000", "-f", "mp4", out_path],
             check=True, capture_output=True,
