@@ -133,9 +133,7 @@ def transcribe(wav_path: str, source_lang: str) -> dict:
             return transcribe_groq(wav_path, source_lang)
         except Exception:
             pass
-    if os.getenv("DEEPGRAM_API_KEY"):
-        return {"text": "deepgram transcript", "confidence": 0.9, "provider": "deepgram"}
-    if os.getenv("GOOGLE_CLOUD_PROJECT"):
+    if os.getenv("LINGOFY_USE_CHIRP") and os.getenv("GOOGLE_CLOUD_PROJECT"):
         try:
             return transcribe_chirp(wav_path, source_lang)
         except Exception:

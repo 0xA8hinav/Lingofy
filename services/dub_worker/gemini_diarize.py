@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 CACHE = Path("data/diarize")
+TCACHE = Path("data/transcripts")
 KEYS_FILE = "/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json"
 
 
@@ -73,12 +74,66 @@ def _diarize_transcribe_api(audio_path: str) -> list:
                             words.append(a)
             if not words:
                 raise ValueError("no word annotations returned")
+            _save_transcript_cache(audio_path, words)
             return _words_to_segments(words)
         except Exception as e:
             last_err = e
             time.sleep(2)
             continue
     raise RuntimeError(f"transcribe api failed on all keys: {last_err}")
+
+
+def _tkey(audio_path: str) -> Path:
+    import hashlib
+
+    h = hashlib.sha1()
+    with open(audio_path, "rb") as f:
+        while True:
+            b = f.read(1 << 20)
+            if not b:
+                break
+            h.update(b)
+    return TCACHE / f"{h.hexdigest()}.json"
+
+
+def _save_transcript_cache(audio_path: str, words) -> None:
+    try:
+        TCACHE.mkdir(parents=True, exist_ok=True)
+        out = []
+        for w in words:
+            s, e = _off(w, "start_offset"), _off(w, "end_offset")
+            out.append({"word": getattr(w, "text", ""), "start": s, "end": e,
+                        "speaker": str(getattr(w, "speaker", "") or "")})
+        _tkey(audio_path).write_text(json.dumps(out))
+    except Exception:
+        pass
+
+
+def _off(w, attr: str) -> float:
+    v = getattr(w, attr, None)
+    try:
+        return float(v.total_seconds()) if hasattr(v, "total_seconds") else float(v or 0)
+    except Exception:
+        return 0.0
+
+
+def chunk_text(audio_path: str, start_s: float, end_s: float):
+    """Slice cached transcript words for [start, end] -> (text, speaker)."""
+    p = _tkey(audio_path)
+    if not p.exists():
+        return "", ""
+    words = json.loads(p.read_text())
+    use = [w for w in words if w["end"] > start_s and w["start"] < end_s]
+    if not use:
+        return "", ""
+    text = " ".join(w["word"] for w in use).strip()
+    votes: dict = {}
+    for w in use:
+        n = "".join(ch for ch in str(w.get("speaker", "")) if ch.isdigit()) or "1"
+        lab = str(min(max(int(n), 1), 6))
+        votes[lab] = votes.get(lab, 0) + (w["end"] - w["start"])
+    speaker = max(votes, key=votes.get)
+    return text, speaker
 
 
 def _words_to_segments(words: list) -> list:

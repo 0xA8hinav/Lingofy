@@ -65,6 +65,23 @@ import threading as _th
 _SEGMAPS: dict = {}
 
 
+def _session_full_wav(sid: str) -> str:
+    """Concat session chunks into one 16k mono wav (built once, reused)."""
+    import subprocess
+
+    from pathlib import Path as _P
+
+    s = SESSIONS[sid]
+    full_wav = _P("data") / "dubbed" / sid / "_full16k.wav"
+    full_wav.parent.mkdir(parents=True, exist_ok=True)
+    if not full_wav.exists():
+        lst = full_wav.with_suffix(".txt")
+        lst.write_text("".join(f"file '{_P(c['wav_path']).resolve()}'\n" for c in s["chunks"]))
+        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+                        "-ac", "1", "-ar", "16000", str(full_wav)], check=True, capture_output=True)
+    return str(full_wav)
+
+
 def _session_segments(sid: str) -> list:
     """File-level Gemini speaker map, computed once per session, cached on disk."""
     if sid in _SEGMAPS:
@@ -94,16 +111,7 @@ def _session_segments(sid: str) -> list:
             pass
     chunks = s["chunks"]
     total_s = max(c["end_ms"] for c in chunks) / 1000
-    full_wav = Path("data") / "dubbed" / sid / "_full16k.wav"
-    full_wav.parent.mkdir(parents=True, exist_ok=True)
-    if not full_wav.exists():
-        import shutil
-        import subprocess
-
-        lst = full_wav.with_suffix(".txt")
-        lst.write_text("".join(f"file '{Path(c['wav_path']).resolve()}'\n" for c in chunks))
-        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
-                        "-ac", "1", "-ar", "16000", str(full_wav)], check=True, capture_output=True)
+    full_wav = _session_full_wav(sid)
     try:
         segs = _gd.diarize_file(str(full_wav), total_s)
     except Exception:
@@ -134,16 +142,22 @@ def _dub_chunk(sid: str, seq: int) -> str:
         if seg.exists():
             return f"/output/{sid}/{seg.name}"
         dur_ms = c["end_ms"] - c["start_ms"]
-        # speaker priority: file-level Gemini map (free) > chirp tag > steady default
+        # Gemini-first, zero paid APIs: file transcript sliced per chunk + file speaker map
         try:
             from services.dub_worker import gemini_diarize as _gd
 
-            file_label = _gd.speaker_at(_session_segments(sid), c["start_ms"] / 1000)
+            _segs = _session_segments(sid)
+            _full = _session_full_wav(sid)
+            text, label = _gd.chunk_text(_full, c["start_ms"] / 1000, c["end_ms"] / 1000)
+            if not label:
+                label = _gd.speaker_at(_segs, c["start_ms"] / 1000)
         except Exception:
-            file_label = None
-        r = transcribe(c["wav_path"], s["source_lang"])
-        label = file_label or r.get("speaker_label") or "1"
-        tt = translate(r["text"], s["source_lang"], s["target_lang"])["target_text"]
+            text, label = "", ""
+        if not text:
+            r = transcribe(c["wav_path"], s["source_lang"])
+            text = r["text"]
+            label = label or r.get("speaker_label") or "1"
+        tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
         dubbed = Path("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
         out = synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{seq:04d}_{label}", target_ms=dur_ms)
