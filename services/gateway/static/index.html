@@ -3,47 +3,58 @@
 <style>body{font-family:sans-serif;max-width:760px;margin:2em auto}video{width:100%;background:#000}#bar{height:10px;background:#eee}#fill{height:10px;background:#4caf50;width:0%}</style>
 </head><body>
 <h1>Lingofy dub test</h1>
-<p>Upload mp4/mov/webm, pick direction, Dub. First chunk plays in ~10s while the rest renders ahead of you.</p>
+<p>Upload mp4/mov/webm, pick direction, Dub. Buffers into one full video, then plays straight through.</p>
 <input type="file" id="f" accept="video/*,audio/*" />
 <select id="dir"><option value="en-hi">EN → HI</option><option value="hi-en">HI → EN</option></select>
 <button onclick="go()">Dub</button>
 <div id="st"></div><div id="bar"><div id="fill"></div></div>
+<div id="spk" style="font-weight:bold"></div>
+<div><label><input type="checkbox" id="dubbed" checked> Dubbed audio</label> <span style="color:#888">(uncheck for original audio)</span></div>
 <div id="cost" style="font-size:small;color:#888"></div>
 <video id="v" controls></video>
 <pre id="m"></pre>
 <script>
-let sid=null,total=0,prefetched={};
+let sid=null,total=0,timer=null,dubUrl=null,origUrl=null,segments=[];
 async function go(){
   const dir=document.getElementById('dir').value.split('-');
   const s=await (await fetch('/v1/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_lang:dir[0],target_lang:dir[1]})})).json();
   sid=s.session_id;
   const fd=new FormData(); fd.append('file', document.getElementById('f').files[0]);
   const u=await (await fetch('/v1/sessions/'+sid+'/video',{method:'POST',body:fd})).json();
-  total=u.chunks_total; prefetched={};
-  document.getElementById('st').textContent='buffering first chunk… (analyzing voices once, then ~5s/chunk)';
-  fetch('/v1/sessions/'+sid+'/dub',{method:'POST'}); // full video builds in background
-  playSeq(0);
+  total=u.chunks_total;
+  document.getElementById('st').textContent='buffering… 0/'+total;
+  await fetch('/v1/sessions/'+sid+'/dub',{method:'POST'});
+  timer=setInterval(poll,2000);
 }
-async function fetchChunk(n){
-  if(prefetched[n]!==undefined) return prefetched[n];
-  const p=fetch('/v1/sessions/'+sid+'/chunk/'+n).then(r=>r.json()).then(j=>{
-    prefetched[n]=j; return j;
-  });
-  prefetched[n]=p; return p;
-}
-async function playSeq(n){
-  const j=await fetchChunk(n);
+function curSeg(t){return segments.find(x=>t>=x.start&&t<x.end);}
+async function poll(){
+  const st=await (await fetch('/v1/sessions/'+sid+'/status')).json();
+  const pct=st.chunks_total?Math.round(100*st.chunks_done/st.chunks_total):0;
+  document.getElementById('fill').style.width=pct+'%';
+  document.getElementById('st').textContent=st.error?('error: '+st.error):('buffering… '+st.chunks_done+'/'+st.chunks_total+(st.elapsed_s?(' — done in '+st.elapsed_s+'s'):''));
   fetch('/v1/cost').then(r=>r.json()).then(c=>{
     document.getElementById('cost').textContent='spent so far: ₹'+c.chirp_inr+' ('+c.chirp_calls+' Chirp calls, '+c.chirp_audio_min+' min audio)';
   }).catch(()=>{});
-  if(j.done){document.getElementById('st').textContent='done — full video ready below';return;}
-  const v=document.getElementById('v');
-  v.src=j.url+'?t='+Date.now();
-  document.getElementById('fill').style.width=Math.round(100*n/total)+'%';
-  document.getElementById('st').textContent='playing chunk '+(n+1)+'/'+total+' — rest rendering ahead';
-  try{await v.play();}catch(e){}
-  fetchChunk(n+1); fetchChunk(n+2); // stay ahead of playback
-  v.onended=()=>playSeq(n+1);
+  if(st.error){clearInterval(timer);return;}
+  if(st.video_url&&st.chunks_done>=st.chunks_total&&st.chunks_total>0){
+    clearInterval(timer);
+    const m=await (await fetch('/v1/sessions/'+sid+'/manifest')).json();
+    dubUrl=m.video_url; origUrl=m.orig_url; segments=m.segments||[];
+    const v=document.getElementById('v');
+    v.src=(document.getElementById('dubbed').checked?dubUrl:origUrl||dubUrl)+'?t='+Date.now();
+    v.play().catch(()=>{});
+    document.getElementById('m').textContent=JSON.stringify({speakers:m.speakers,chunks:total},null,2);
+  }
 }
+document.getElementById('v').addEventListener('timeupdate',e=>{
+  const t=e.target.currentTime, s=curSeg(t);
+  document.getElementById('spk').textContent=s?('Speaking now: Speaker '+s.speaker+' ('+s.gender+')'):'';
+});
+document.getElementById('dubbed').addEventListener('change',e=>{
+  const v=document.getElementById('v'); if(!v.src) return;
+  const t=v.currentTime, wasPaused=v.paused;
+  v.src=((e.target.checked?dubUrl:origUrl)||dubUrl)+'?t='+Date.now();
+  v.addEventListener('loadedmetadata',()=>{v.currentTime=Math.min(t,v.duration||t); if(!wasPaused) v.play().catch(()=>{});},{once:true});
+});
 </script>
 </body></html>

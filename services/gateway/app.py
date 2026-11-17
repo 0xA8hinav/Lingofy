@@ -100,6 +100,13 @@ def _run_dub(sid: str):
         assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid),
                          chunks_total=len(chunks), src_video=s["src"])
         SESSIONS[sid]["video_url"] = f"/output/{sid}/dubbed_{s['target_lang']}.mp4"
+        try:
+            import shutil as _sh
+
+            _sh.copy(s["src"], str(OUTPUT / sid / "orig.mp4"))
+            SESSIONS[sid]["orig_url"] = f"/output/{sid}/orig.mp4"
+        except Exception:
+            pass
         SESSIONS[sid]["elapsed_s"] = round(time.time() - t0, 1)
     except Exception as e:
         SESSIONS[sid]["error"] = str(e)
@@ -220,11 +227,12 @@ def _dub_chunk(sid: str, seq: int) -> str:
     c = next(x for x in chunks if x["seq"] == seq)
     lock = _CHUNK_LOCKS.setdefault((sid, seq), _th.Lock())
     seg = OUTPUT / sid / f"seg_{seq:04d}_{s['target_lang']}.mp4"
+    orig = OUTPUT / sid / f"orig_{seq:04d}.mp4"
     if seg.exists():
-        return f"/output/{sid}/{seg.name}"
+        return {"url": f"/output/{sid}/{seg.name}", "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else ""}
     with lock:
         if seg.exists():
-            return f"/output/{sid}/{seg.name}"
+            return {"url": f"/output/{sid}/{seg.name}", "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else ""}
         dur_ms = c["end_ms"] - c["start_ms"]
         # Gemini-first, zero paid APIs: file transcript sliced per chunk + file speaker map
         try:
@@ -251,8 +259,14 @@ def _dub_chunk(sid: str, seq: int) -> str:
         else:
             out = {"wav_path": str(_wav), "mp3_path": str(_wav.with_suffix(".mp3")), "provider": "piper"}
         assemble_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, out["wav_path"], str(seg))
+        try:
+            assemble_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, c["wav_path"], str(orig))
+        except Exception:
+            pass
         SESSIONS[sid]["chunks_done"] = max(s.get("chunks_done", 0), seq + 1)
-        return f"/output/{sid}/{seg.name}"
+        return {"url": f"/output/{sid}/{seg.name}",
+                "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else "",
+                "speaker": label, "gender": gm["gender"] or "unknown"}
 
 
 @app.get("/v1/sessions/{sid}/chunk/{seq}")
@@ -264,10 +278,11 @@ def get_chunk(sid: str, seq: int):
     if seq >= total:
         return {"done": True, "total": total}
     try:
-        url = _dub_chunk(sid, seq)
+        d = _dub_chunk(sid, seq)
     except Exception as e:
         raise HTTPException(500, f"chunk dub failed: {e}")
-    return {"done": False, "seq": seq, "total": total, "url": url, "next": seq + 1}
+    d.update({"done": False, "seq": seq, "total": total, "next": seq + 1})
+    return d
 
 
 @app.post("/v1/sessions/{sid}/dub")
@@ -362,10 +377,22 @@ def status(sid: str):
 def manifest(sid: str):
     s = SESSIONS.get(sid, {"chunks_total": 0, "chunks_done": 0})
     tgt = s.get("target_lang", "hi")
+    segs = []
+    try:
+        _map = _session_segments(sid)
+        _gen = _session_genders(sid)
+        for x in _map:
+            lab = str(x["speaker"])
+            segs.append({"start": x["start"], "end": x["end"], "speaker": lab,
+                         "gender": _gen.get(lab, {}).get("gender", "unknown")})
+    except Exception:
+        pass
     return {
         "video_url": s.get("video_url") or f"/output/{sid}/dubbed_{tgt}.mp4",
+        "orig_url": s.get("orig_url"),
         "playlist_url": f"/output/{sid}/playlist.m3u8",
-        "speakers": [1, 2, 3],
+        "speakers": sorted({x["speaker"] for x in segs}) or [1, 2, 3],
+        "segments": segs,
         "chunks_total": s["chunks_total"],
         "chunks_done": s.get("chunks_done", 0),
     }
