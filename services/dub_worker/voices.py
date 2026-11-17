@@ -9,18 +9,15 @@ VOICE_DIR = "assets/voices"
 
 
 # Natural speaking rate per language at length-scale 1.0 (measured, chars/sec).
-# Instead of robotic post-stretch, we set Piper's --length-scale from the
-# text density for the slot: short text -> slow down, dense text -> speed up.
+# We ALWAYS synthesize at natural rate (scale 1.0). Duration fit is done by
+# padding trailing silence when short, or a mild speedup (max ~1.1, barely
+# noticeable) when long. Never slow speech down — that sounds robotic.
 RATE_CHS = {"hi": 15.6, "en": 18.6}
 
 
 def _rate_scale(text: str, target_lang: str, target_ms: int) -> float:
-    if not target_ms or target_ms <= 0 or not text.strip():
-        return 1.0
-    rate = RATE_CHS.get(target_lang[:2], 16.0)
-    natural_s = len(text) / rate
-    scale = natural_s / (target_ms / 1000)
-    return min(1.6, max(0.7, scale))
+    # Retired: we keep natural rate (1.0) and pad silence instead.
+    return 1.0
 
 
 def voice_for(speaker_label: str, lang: str) -> str:
@@ -51,7 +48,8 @@ def _wav_ms(path: str) -> int:
 
 
 def _fit_to_target(wav: str, target_ms: int) -> None:
-    """Time-stretch dubbed wav to source duration via chained atempo."""
+    """Match slot duration WITHOUT touching speech rate: pad silence if short,
+    mild speedup (max ~1.1x, imperceptible) if slightly long."""
     import shutil
     import subprocess
     from pathlib import Path
@@ -63,19 +61,20 @@ def _fit_to_target(wav: str, target_ms: int) -> None:
         return
     if abs(got - target_ms) <= max(400, target_ms * 0.05):
         return
-    tempo = got / target_ms  # >1 means dubbed too long -> speed up
-    tempo = min(10.0, max(0.1, tempo))
-    chain, t = [], tempo
-    while t > 2.0:
-        chain.append("atempo=2.0")
-        t /= 2.0
-    while t < 0.5:
-        chain.append("atempo=0.5")
-        t /= 0.5
-    chain.append(f"atempo={t:.3f}")
+    if got < target_ms:
+        pad_s = (target_ms - got) / 1000
+        tmp = str(Path(wav).with_suffix(".pad.wav"))
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", wav, "-af", f"apad=whole_dur={target_ms / 1000:.3f}",
+             "-t", f"{target_ms / 1000:.3f}", tmp],
+            check=True, capture_output=True,
+        )
+        Path(tmp).replace(wav)
+        return
+    tempo = min(got / target_ms, 1.1)
     tmp = str(Path(wav).with_suffix(".fit.wav"))
     subprocess.run(
-        ["ffmpeg", "-y", "-i", wav, "-filter:a", ",".join(chain), tmp],
+        ["ffmpeg", "-y", "-i", wav, "-filter:a", f"atempo={tempo:.3f}", tmp],
         check=True, capture_output=True,
     )
     Path(tmp).replace(wav)
