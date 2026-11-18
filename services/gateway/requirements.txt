@@ -1,0 +1,4 @@
+# Gateway: light HTTP edge. Keep this image small — no ML deps here.
+fastapi==0.128.6
+uvicorn==0.40.0
+python-multipart==0.0.22

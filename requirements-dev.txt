@@ -1,0 +1,6 @@
+# Dev/test deps (CI installs this on top of the worker image deps).
+pytest==9.0.3
+pytest-asyncio==1.4.0
+pytest-timeout==2.4.0
+ruff==0.16.1
+httpx==0.28.1

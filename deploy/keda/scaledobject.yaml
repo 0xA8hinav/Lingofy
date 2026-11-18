@@ -1,0 +1,39 @@
+# Phase-2 queue worker: KEDA on the SQS dub-tasks queue.
+# Off by default (values.dubWorker.enabled=false) until the app speaks SQS.
+# When enabled, deploy dub-worker with a poll loop against SQS_URL and the
+# same full image. Queue semantics mirror docs/plan.md:
+#   queueLength: 5, min 1, max 8, cooldown 120s, visibility 60s, maxReceive 3.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: lingofy-aws-auth
+spec:
+  podIdentity:
+    provider: aws-eks
+  secretTargetRef:
+    - parameter: awsAccessKeyID
+      name: lingofy-aws
+      key: AWS_ACCESS_KEY_ID
+    - parameter: awsSecretAccessKey
+      name: lingofy-aws
+      key: AWS_SECRET_ACCESS_KEY
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: lingofy-dub-worker
+spec:
+  scaleTargetRef:
+    name: lingofy-dub-worker
+  pollingInterval: 10
+  cooldownPeriod: 120
+  minReplicaCount: 1
+  maxReplicaCount: 8
+  triggers:
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: lingofy-aws-auth
+      metadata:
+        queueURL: ${SQS_DUB_TASKS_URL}
+        queueLength: "5"
+        awsRegion: ${AWS_REGION}

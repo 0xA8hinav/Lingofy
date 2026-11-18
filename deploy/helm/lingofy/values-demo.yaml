@@ -1,0 +1,11 @@
+# demo (single EC2 k3s / EKS): ECR images, gp3 volumes.
+# Fill registry from: terraform output -raw ecr_full  (strip image name)
+global: { registry: "123456789012.dkr.ecr.ap-south-1.amazonaws.com" }
+images:
+  full: { repository: "lingofy/lingofy-full", tag: "demo", pullPolicy: Always }
+  assembler: { repository: "lingofy/lingofy-assembler", tag: "demo", pullPolicy: Always }
+gateway:
+  useProviderSecret: true
+persistence: { enabled: true, size: 50Gi, storageClass: "gp3" }
+autoscaling: { enabled: true, minReplicas: 1, maxReplicas: 4, cpuUtilization: 70 }
+ingress: { enabled: true, host: "lingofy.example.com" }

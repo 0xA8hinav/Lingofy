@@ -1,0 +1,21 @@
+groups:
+  - name: lingofy-mvp
+    interval: 30s
+    rules:
+      # SLOBurn proxy: backlog exists AND nothing completes for 10m —
+      # worker wedged (OOM/crash) or provider storm. Normal dubbing always
+      # increments chunks_done, so this stays silent on the happy path.
+      - alert: SLOBurn
+        expr: (lingofy_chunks_total_total - lingofy_chunks_done_total) > 0 and deriv(lingofy_chunks_done_total[10m]) <= 0
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "Dub backlog not draining for 5m"
+      # Cost guard (stands in for DLQNonEmpty until the SQS phase lands):
+      # the free-by-default setup should never touch paid STT.
+      - alert: PaidPathUsed
+        expr: lingofy_chirp_calls_total > 0
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Paid STT path used — verify LINGOFY_USE_CHIRP intent"

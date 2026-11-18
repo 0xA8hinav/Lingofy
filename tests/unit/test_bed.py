@@ -17,8 +17,8 @@ def _write_wav(path, samples, sr=16000):
 def test_bed_ducks_speech_keeps_ambience(tmp_path):
     sr = 16000
     # 1s loud tone (speech), 1s quiet tone (ambience), 1s loud tone
-    loud = [int(12000 * (1 if i % 2 else -1)) for i in range(sr)]
-    quiet = [int(1200 * (1 if i % 2 else -1)) for i in range(sr)]
+    loud = [(12000 * (1 if i % 2 else -1)) for i in range(sr)]
+    quiet = [(1200 * (1 if i % 2 else -1)) for i in range(sr)]
     src = str(tmp_path / "chunk.wav")
     _write_wav(src, loud + quiet + loud, sr)
     mask = speech_mask(loud + quiet + loud, sr)

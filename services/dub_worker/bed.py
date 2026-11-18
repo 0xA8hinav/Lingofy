@@ -8,6 +8,7 @@ too slow for the demo). Uses an RMS speech mask:
 The dubbed voice is then mixed on top at full level, so the result keeps
 background sound like a real dub instead of a silent-track replacement.
 """
+
 import struct
 import wave
 from pathlib import Path
@@ -39,7 +40,7 @@ def speech_mask(samples, sr: int, frame_ms: int = FRAME_MS, floor_mult: float = 
     step = max(1, int(sr * frame_ms / 1000))
     rms = []
     for i in range(0, len(samples), step):
-        seg = samples[i:i + step]
+        seg = samples[i : i + step]
         if not seg:
             break
         rms.append((sum(s * s for s in seg) / len(seg)) ** 0.5)
@@ -88,11 +89,25 @@ def mix_voice_bed(voice_wav: str, bed_wav: str, out_wav: str, bed_gain: float = 
         shutil.copy(voice_wav, out_wav)
         return out_wav
     subprocess.run(
-        ["ffmpeg", "-y", "-i", voice_wav, "-i", bed_wav,
-         "-filter_complex",
-         f"[0:a]volume=1.0[v];[1:a]volume={bed_gain}[b];[v][b]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[out]",
-         "-map", "[out]", "-ar", "44100", "-ac", "1", out_wav],
-        check=True, capture_output=True,
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            voice_wav,
+            "-i",
+            bed_wav,
+            "-filter_complex",
+            f"[0:a]volume=1.0[v];[1:a]volume={bed_gain}[b];[v][b]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[out]",
+            "-map",
+            "[out]",
+            "-ar",
+            "44100",
+            "-ac",
+            "1",
+            out_wav,
+        ],
+        check=True,
+        capture_output=True,
     )
     return out_wav
 

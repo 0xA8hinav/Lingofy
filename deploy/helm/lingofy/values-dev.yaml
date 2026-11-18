@@ -1,0 +1,6 @@
+# dev (k3d/kind): local tags, local-path storage.
+global: { registry: "" }
+images:
+  full: { repository: "lingofy-full", tag: "dev", pullPolicy: IfNotPresent }
+  assembler: { repository: "lingofy-assembler", tag: "dev", pullPolicy: IfNotPresent }
+persistence: { enabled: true, size: 20Gi, storageClass: "" }

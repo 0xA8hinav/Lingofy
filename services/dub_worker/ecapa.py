@@ -3,10 +3,11 @@
 One pass over all chunks at upload gives file-consistent speaker IDs
 (unlike per-chunk votes). Temporal smoothing kills single-chunk flips.
 """
+
+import struct
 import wave
 
 import numpy as np
-import struct
 
 _classifier = None
 
@@ -83,7 +84,10 @@ def session_map(paths: list) -> dict:
             assign[p] = lab
         elif best is None:
             # nearest of existing
-            ds = [1.0 - float(np.dot(e, c) / ((np.linalg.norm(e) or 1) * (np.linalg.norm(c) or 1))) for c, _, _ in clusters]
+            ds = [
+                1.0 - float(np.dot(e, c) / ((np.linalg.norm(e) or 1) * (np.linalg.norm(c) or 1)))
+                for c, _, _ in clusters
+            ]
             bi = int(np.argmin(ds))
             c, n, lab = clusters[bi]
             clusters[bi] = ((c * n + e) / (n + 1), n + 1, lab)

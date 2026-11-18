@@ -1,0 +1,17 @@
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.env
+data/
+output/
+samples/*.mp4
+!samples/*.md
+.pytest_cache/
+.playwright-mcp/
+docs/
+tests/
+scripts/demo*.sh

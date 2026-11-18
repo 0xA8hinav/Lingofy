@@ -1,4 +1,5 @@
 """Gateway: video ingest, status, manifest. Local data/ stand-in for S3/SQS ($0 demo)."""
+
 import json
 import uuid
 from pathlib import Path
@@ -15,6 +16,42 @@ AUDIO = DATA / "audio"
 OUTPUT = Path("output")
 OUTPUT.mkdir(exist_ok=True)
 app.mount("/output", StaticFiles(directory=str(OUTPUT)), name="output")
+
+
+@app.get("/metrics", response_class=HTMLResponse)
+def metrics():
+    """Prometheus plaintext: session/chunk gauges + cost counter (one SLO)."""
+    try:
+        from services.dub_worker import costs as _c
+
+        t = _c.totals()
+        chirp_calls, chirp_min = t.get("chirp_calls", 0), t.get("chirp_audio_min", 0)
+    except Exception:
+        chirp_calls, chirp_min = 0, 0
+    n_sess = len(SESSIONS)
+    done = sum(s.get("chunks_done", 0) for s in SESSIONS.values())
+    total = sum(s.get("chunks_total", 0) for s in SESSIONS.values())
+    lines = [
+        "# HELP lingofy_sessions_total Active dub sessions",
+        "# TYPE lingofy_sessions_total gauge",
+        f"lingofy_sessions_total {n_sess}",
+        "# HELP lingofy_chunks_done_total Dubbed chunks",
+        "# TYPE lingofy_chunks_done_total counter",
+        f"lingofy_chunks_done_total {done}",
+        "# HELP lingofy_chunks_total_total Chunk backlog + done",
+        "# TYPE lingofy_chunks_total_total counter",
+        f"lingofy_chunks_total_total {total}",
+        "# HELP lingofy_chirp_calls_total Paid Chirp calls (should stay 0 on free path)",
+        "# TYPE lingofy_chirp_calls_total counter",
+        f"lingofy_chirp_calls_total {chirp_calls}",
+        "# HELP lingofy_chirp_minutes_total Paid Chirp audio minutes",
+        "# TYPE lingofy_chirp_minutes_total counter",
+        f"lingofy_chirp_minutes_total {chirp_min}",
+    ]
+    from fastapi.responses import PlainTextResponse
+
+    return PlainTextResponse("\n".join(lines) + "\n")
+
 
 # Preload heavy local models at startup so first chunk dubs in seconds.
 try:
@@ -95,7 +132,16 @@ def _run_dub(sid: str):
                     return c["seq"]  # already dubbed via chunk path; skip duplicate synth
                 tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
                 dur_ms = c["end_ms"] - c["start_ms"]
-                _v = synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{c['seq']:04d}_{label}", target_ms=dur_ms, gender=gm["gender"], gindex=gm["gindex"])
+                _v = synthesize(
+                    tt,
+                    s["target_lang"],
+                    label,
+                    str(dubbed),
+                    name=f"{c['seq']:04d}_{label}",
+                    target_ms=dur_ms,
+                    gender=gm["gender"],
+                    gindex=gm["gindex"],
+                )
                 try:
                     from services.dub_worker.bed import dubbed_with_background
 
@@ -114,8 +160,14 @@ def _run_dub(sid: str):
         got = len(sorted(dubbed.glob("*.wav")))
         if got < len(chunks) // 2:
             raise RuntimeError(f"only {got}/{len(chunks)} chunks dubbed — transcript unavailable, retry later")
-        assemble_session(sid, s["target_lang"], dubbed_dir=str(dubbed), out_dir=str(OUTPUT / sid),
-                         chunks_total=len(chunks), src_video=s["src"])
+        assemble_session(
+            sid,
+            s["target_lang"],
+            dubbed_dir=str(dubbed),
+            out_dir=str(OUTPUT / sid),
+            chunks_total=len(chunks),
+            src_video=s["src"],
+        )
         SESSIONS[sid]["video_url"] = f"/output/{sid}/dubbed_{s['target_lang']}.mp4"
         try:
             import shutil as _sh
@@ -131,6 +183,7 @@ def _run_dub(sid: str):
 
 _CHUNK_LOCKS: dict = {}
 import threading as _th
+
 _SEGMAPS: dict = {}
 _GENDERS: dict = {}
 
@@ -180,7 +233,6 @@ def _session_full_wav(sid: str) -> str:
     wavs, and the full source must never be picked up as dubbed output.
     """
     import subprocess
-
     from pathlib import Path as _P
 
     s = SESSIONS[sid]
@@ -190,8 +242,11 @@ def _session_full_wav(sid: str) -> str:
     if not full_wav.exists():
         lst = work / "concat.txt"
         lst.write_text("".join(f"file '{_P(c['wav_path']).resolve()}'\n" for c in s["chunks"]))
-        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
-                        "-ac", "1", "-ar", "16000", str(full_wav)], check=True, capture_output=True)
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-ac", "1", "-ar", "16000", str(full_wav)],
+            check=True,
+            capture_output=True,
+        )
     return str(full_wav)
 
 
@@ -254,12 +309,16 @@ def _dub_chunk(sid: str, seq: int) -> str:
 
     def _resp(label="", gender=""):
         _dur = c["end_ms"] - c["start_ms"]
-        return {"url": f"/output/{sid}/{seg.name}",
-                "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else "",
-                "mse_url": f"/output/{sid}/{mse.name}" if mse.exists() else "",
-                "mse_init": f"/output/{sid}/mse_init.mp4",
-                "start": c["start_ms"] / 1000, "dur": _dur / 1000,
-                "speaker": label, "gender": gender or "unknown"}
+        return {
+            "url": f"/output/{sid}/{seg.name}",
+            "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else "",
+            "mse_url": f"/output/{sid}/{mse.name}" if mse.exists() else "",
+            "mse_init": f"/output/{sid}/mse_init.mp4",
+            "start": c["start_ms"] / 1000,
+            "dur": _dur / 1000,
+            "speaker": label,
+            "gender": gender or "unknown",
+        }
 
     if seg.exists():
         return _resp()
@@ -288,7 +347,16 @@ def _dub_chunk(sid: str, seq: int) -> str:
         dubbed.mkdir(parents=True, exist_ok=True)
         _wav = dubbed / f"{seq:04d}_{label}.wav"
         if not _wav.exists():
-            out = synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{seq:04d}_{label}", target_ms=dur_ms, gender=gm["gender"], gindex=gm["gindex"])
+            out = synthesize(
+                tt,
+                s["target_lang"],
+                label,
+                str(dubbed),
+                name=f"{seq:04d}_{label}",
+                target_ms=dur_ms,
+                gender=gm["gender"],
+                gindex=gm["gindex"],
+            )
         else:
             out = {"wav_path": str(_wav), "mp3_path": str(_wav.with_suffix(".mp3")), "provider": "piper"}
         # keep music/SFX from the original, duck the original voice, mix dub on top
@@ -324,12 +392,16 @@ def _dub_chunk(sid: str, seq: int) -> str:
         except Exception:
             pass
         SESSIONS[sid]["chunks_done"] = max(s.get("chunks_done", 0), seq + 1)
-        return {"url": f"/output/{sid}/{seg.name}",
-                "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else "",
-                "mse_url": f"/output/{sid}/{mse.name}" if mse.exists() else "",
-                "mse_init": f"/output/{sid}/mse_init.mp4",
-                "start": c["start_ms"] / 1000, "dur": dur_ms / 1000,
-                "speaker": label, "gender": gm["gender"] or "unknown"}
+        return {
+            "url": f"/output/{sid}/{seg.name}",
+            "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else "",
+            "mse_url": f"/output/{sid}/{mse.name}" if mse.exists() else "",
+            "mse_init": f"/output/{sid}/mse_init.mp4",
+            "start": c["start_ms"] / 1000,
+            "dur": dur_ms / 1000,
+            "speaker": label,
+            "gender": gm["gender"] or "unknown",
+        }
 
 
 @app.get("/v1/sessions/{sid}/chunk/{seq}")
@@ -358,7 +430,10 @@ def start_dub(sid: str, bg: BackgroundTasks):
 
 @app.post("/v1/sessions/{sid}/video")
 async def upload_video(
-    sid: str, bg: BackgroundTasks, file: UploadFile = File(...), x_mock_size: int | None = Header(default=None)
+    sid: str,
+    bg: BackgroundTasks,
+    file: UploadFile = File(...),  # noqa: B008 - canonical FastAPI pattern
+    x_mock_size: int | None = Header(default=None),
 ):
     if sid not in SESSIONS:
         SESSIONS[sid] = {"source_lang": "en", "target_lang": "hi", "chunks_total": 0, "chunks_done": 0}
@@ -369,7 +444,10 @@ async def upload_video(
     name = (file.filename or "upload").lower()
     if not name.endswith((".mp4", ".mov", ".webm", ".mkv", ".wav", ".mp3")):
         raise HTTPException(400, "unsupported format")
-    if len(content) < 100 or (not name.endswith((".wav", ".mp3")) and content[:4] not in (b"\x00\x00\x00\x18", b"\x00\x00\x00\x20", b"RIFF", b"\x1a\x45\xdf\xa3", b"ftyp")):
+    if len(content) < 100 or (
+        not name.endswith((".wav", ".mp3"))
+        and content[:4] not in (b"\x00\x00\x00\x18", b"\x00\x00\x00\x20", b"RIFF", b"\x1a\x45\xdf\xa3", b"ftyp")
+    ):
         # tiny heuristic: reject obvious non-video; wav RIFF passes
         if not (name.endswith(".wav") and content[:4] == b"RIFF") and len(content) < 1000:
             raise HTTPException(400, "corrupt video")
@@ -456,8 +534,14 @@ def manifest(sid: str):
         _gen = _session_genders(sid)
         for x in _map:
             lab = str(x["speaker"])
-            segs.append({"start": x["start"], "end": x["end"], "speaker": lab,
-                         "gender": _gen.get(lab, {}).get("gender", "unknown")})
+            segs.append(
+                {
+                    "start": x["start"],
+                    "end": x["end"],
+                    "speaker": lab,
+                    "gender": _gen.get(lab, {}).get("gender", "unknown"),
+                }
+            )
     except Exception:
         pass
     return {

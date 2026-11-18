@@ -1,0 +1,63 @@
+{{- $full := printf "%s%s:%s" (ternary (print .Values.global.registry "/") "" (ne .Values.global.registry "")) .Values.images.full.repository .Values.images.full.tag -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-gateway
+  labels: { app: lingofy-gateway }
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels: { app: lingofy-gateway }
+  template:
+    metadata:
+      labels: { app: lingofy-gateway }
+      annotations:
+        {{- if .Values.observability.scrapeAnnotations }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+        {{- end }}
+    spec:
+      containers:
+        - name: gateway
+          image: {{ $full | quote }}
+          imagePullPolicy: {{ .Values.images.full.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.gateway.containerPort }}
+          env:
+            - name: ASSEMBLE_POLL_S
+              value: {{ .Values.assembler.pollInterval | quote }}
+            {{- if .Values.gateway.useProviderSecret }}
+            - name: GOOGLE_CLOUD_PROJECT
+              valueFrom: { secretKeyRef: { name: lingofy-providers, key: GOOGLE_CLOUD_PROJECT } }
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /secrets/gcloud.json
+            {{- end }}
+          {{- if .Values.gateway.useProviderSecret }}
+          volumeMounts:
+            - { name: providers, mountPath: /secrets, readOnly: true }
+            - { name: data, mountPath: /app/data }
+            - { name: output, mountPath: /app/output }
+          {{- else }}
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: output, mountPath: /app/output }
+          {{- end }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8080 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources: {{ .Values.gateway.resources | toYaml | nindent 12 }}
+      volumes:
+        {{- if .Values.gateway.useProviderSecret }}
+        - name: providers
+          secret: { secretName: lingofy-providers, items: [{ key: gcloud.json, path: gcloud.json }] }
+        {{- end }}
+        - name: data
+          persistentVolumeClaim: { claimName: {{ .Release.Name }}-data }
+        - name: output
+          persistentVolumeClaim: { claimName: {{ .Release.Name }}-output }

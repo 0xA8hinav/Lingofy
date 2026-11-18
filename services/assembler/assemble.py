@@ -1,9 +1,18 @@
 """Assembler: order by seq, mux-back with video copy, progressive manifest."""
+
 import json
 from pathlib import Path
 
 
-def assemble_session(session_id: str, target_lang: str, dubbed_dir: str = "", out_dir: str = "", chunks_total: int | None = None, src_video: str = "", preview: bool = False) -> dict:
+def assemble_session(
+    session_id: str,
+    target_lang: str,
+    dubbed_dir: str = "",
+    out_dir: str = "",
+    chunks_total: int | None = None,
+    src_video: str = "",
+    preview: bool = False,
+) -> dict:
     import shutil
     import subprocess
 
@@ -24,9 +33,32 @@ def assemble_session(session_id: str, target_lang: str, dubbed_dir: str = "", ou
         lst = out / "concat.txt"
         lst.write_text("".join(f"file '{p.resolve()}'\n" for p in mp3s))
         audio = out / "dubbed_audio.m4a"
-        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c:a", "aac", str(audio)], check=True, capture_output=True)
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c:a", "aac", str(audio)],
+            check=True,
+            capture_output=True,
+        )
         if Path(src_video).suffix.lower() in (".mp4", ".mov", ".webm", ".mkv"):
-            subprocess.run(["ffmpeg", "-y", "-i", src_video, "-i", str(audio), "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0", "-shortest", str(video_path)], check=True, capture_output=True)
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    src_video,
+                    "-i",
+                    str(audio),
+                    "-c:v",
+                    "copy",
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "1:a:0",
+                    "-shortest",
+                    str(video_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
         else:
             audio.replace(video_path)
     else:
@@ -52,10 +84,28 @@ def assemble_chunk(src_video: str, start_s: float, dur_s: float, dubbed_wav: str
     Path(out_mp4).parent.mkdir(parents=True, exist_ok=True)
     if Path(src_video).suffix.lower() in (".mp4", ".mov", ".webm", ".mkv") and shutil.which("ffmpeg"):
         subprocess.run(
-            ["ffmpeg", "-y", "-ss", str(start_s), "-t", str(dur_s), "-i", src_video,
-             "-i", dubbed_wav, "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0",
-             "-shortest", out_mp4],
-            check=True, capture_output=True,
+            [
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(start_s),
+                "-t",
+                str(dur_s),
+                "-i",
+                src_video,
+                "-i",
+                dubbed_wav,
+                "-c:v",
+                "copy",
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-shortest",
+                out_mp4,
+            ],
+            check=True,
+            capture_output=True,
         )
     else:
         shutil.copy(dubbed_wav, out_mp4)
@@ -75,13 +125,43 @@ def assemble_mse_chunk(src_video: str, start_s: float, dur_s: float, dubbed_wav:
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     if Path(src_video).suffix.lower() in (".mp4", ".mov", ".webm", ".mkv") and shutil.which("ffmpeg"):
         subprocess.run(
-            ["ffmpeg", "-y", "-ss", str(start_s), "-t", str(dur_s), "-i", src_video,
-             "-i", dubbed_wav, "-map", "0:v:0", "-map", "1:a:0",
-             "-c:v", "libopenh264", "-b:v", "1200k", "-g", "240",
-             "-c:a", "aac", "-ar", "44100", "-ac", "2",
-             "-movflags", "empty_moov+default_base_moof+frag_keyframe",
-             "-frag_duration", "8000000", "-f", "mp4", out_path],
-            check=True, capture_output=True,
+            [
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(start_s),
+                "-t",
+                str(dur_s),
+                "-i",
+                src_video,
+                "-i",
+                dubbed_wav,
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c:v",
+                "libopenh264",
+                "-b:v",
+                "1200k",
+                "-g",
+                "240",
+                "-c:a",
+                "aac",
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
+                "-movflags",
+                "empty_moov+default_base_moof+frag_keyframe",
+                "-frag_duration",
+                "8000000",
+                "-f",
+                "mp4",
+                out_path,
+            ],
+            check=True,
+            capture_output=True,
         )
     else:
         shutil.copy(dubbed_wav, out_path)
@@ -93,8 +173,8 @@ def split_fmp4(fmp4_path: str) -> tuple:
     data = Path(fmp4_path).read_bytes()
     i, boxes = 0, []
     while i + 8 <= len(data):
-        n = int.from_bytes(data[i:i + 4], "big")
-        t = data[i + 4:i + 8]
+        n = int.from_bytes(data[i : i + 4], "big")
+        t = data[i + 4 : i + 8]
         size = n if n >= 8 else len(data) - i
         boxes.append((t, i, size))
         if n < 8:

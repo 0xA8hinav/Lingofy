@@ -1,18 +1,34 @@
 VOICE_MAP = {
-    "en": {"1": "en_US-lessac-medium", "2": "en_US-ryan-medium", "3": "en_US-ryan-medium+pitch-shift",
-           "4": "en_US-lessac-medium+pitch-shift", "5": "en_US-ryan-medium+pitch-shift2", "6": "en_US-lessac-medium+pitch-shift2"},
-    "hi": {"1": "hi_IN-pratham-medium", "2": "hi_IN-priyamvada-medium", "3": "hi_IN-pratham-medium+pitch-shift",
-           "4": "hi_IN-priyamvada-medium+pitch-shift", "5": "hi_IN-pratham-medium+pitch-shift2", "6": "hi_IN-priyamvada-medium+pitch-shift2"},
+    "en": {
+        "1": "en_US-lessac-medium",
+        "2": "en_US-ryan-medium",
+        "3": "en_US-ryan-medium+pitch-shift",
+        "4": "en_US-lessac-medium+pitch-shift",
+        "5": "en_US-ryan-medium+pitch-shift2",
+        "6": "en_US-lessac-medium+pitch-shift2",
+    },
+    "hi": {
+        "1": "hi_IN-pratham-medium",
+        "2": "hi_IN-priyamvada-medium",
+        "3": "hi_IN-pratham-medium+pitch-shift",
+        "4": "hi_IN-priyamvada-medium+pitch-shift",
+        "5": "hi_IN-pratham-medium+pitch-shift2",
+        "6": "hi_IN-priyamvada-medium+pitch-shift2",
+    },
 }
 
 VOICE_DIR = "assets/voices"
 
 # Gender-matched Piper voices. First same-gender speaker gets base, second gets shifted.
 GENDER_VOICES = {
-    "male": {"en": ["en_US-ryan-medium", "en_US-ryan-medium+pitch-shift"],
-             "hi": ["hi_IN-pratham-medium", "hi_IN-pratham-medium+pitch-shift"]},
-    "female": {"en": ["en_US-lessac-medium", "en_US-lessac-medium+pitch-shift"],
-               "hi": ["hi_IN-priyamvada-medium", "hi_IN-priyamvada-medium+pitch-shift2"]},
+    "male": {
+        "en": ["en_US-ryan-medium", "en_US-ryan-medium+pitch-shift"],
+        "hi": ["hi_IN-pratham-medium", "hi_IN-pratham-medium+pitch-shift"],
+    },
+    "female": {
+        "en": ["en_US-lessac-medium", "en_US-lessac-medium+pitch-shift"],
+        "hi": ["hi_IN-priyamvada-medium", "hi_IN-priyamvada-medium+pitch-shift2"],
+    },
 }
 
 # Gendered Gemini pools (stable pools; assignment still random within gender).
@@ -21,8 +37,7 @@ GEMINI_FEMALE = ["Kore", "Aoede", "Leda", "Callirrhoe", "Sulafat"]
 
 # Gemini prebuilt voices pool; each session speaker gets a random one (stable
 # for the session). Hindi-capable neural voices, free tier.
-GEMINI_VOICE_POOL = ["Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda",
-                     "Orus", "Zephyr", "Sulafat", "Callirrhoe"]
+GEMINI_VOICE_POOL = ["Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr", "Sulafat", "Callirrhoe"]
 _SESSION_VOICES: dict = {}
 
 
@@ -48,7 +63,8 @@ def gemini_tts(text: str, voice: str, out_wav: str) -> None:
 
     from google import genai
 
-    keys = _json.load(open("/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json"))["keys"]
+    with open("/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json") as _kf:
+        keys = _json.load(_kf)["keys"]
     from google.genai import types as _t
 
     last = None
@@ -60,8 +76,9 @@ def gemini_tts(text: str, voice: str, out_wav: str) -> None:
                 contents=text,
                 config=_t.GenerateContentConfig(
                     response_modalities=["AUDIO"],
-                    speech_config=_t.SpeechConfig(voice_config=_t.VoiceConfig(
-                        prebuilt_voice_config=_t.PrebuiltVoiceConfig(voice_name=voice))),
+                    speech_config=_t.SpeechConfig(
+                        voice_config=_t.VoiceConfig(prebuilt_voice_config=_t.PrebuiltVoiceConfig(voice_name=voice))
+                    ),
                 ),
             )
             for p in resp.candidates[0].content.parts:
@@ -135,17 +152,22 @@ def _translate_gemini(text: str, source_lang: str, target_lang: str) -> str:
 
     from google import genai
 
-    keys = _js.load(open("/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json"))["keys"]
+    with open("/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json") as _kf:
+        keys = _js.load(_kf)["keys"]
     if source_lang == "hi":
-        task = ("Translate this Hindi into simple everyday spoken English, plain words. "
-                "Keep roughly the SAME NUMBER OF WORDS as the original. "
-                "Output ONLY the English translation, nothing else:\n\n" + text)
+        task = (
+            "Translate this Hindi into simple everyday spoken English, plain words. "
+            "Keep roughly the SAME NUMBER OF WORDS as the original. "
+            "Output ONLY the English translation, nothing else:\n\n" + text
+        )
     else:
-        task = ("Translate this English into simple everyday spoken Hindi in DEVANAGARI script only "
-                "(no Roman letters). Use bolt-chaal Hindi like friends talking. "
-                "Avoid heavy Shuddh Hindi or bookish words. "
-                "Keep roughly the SAME NUMBER OF WORDS as the original English. "
-                "Output ONLY the Hindi translation, nothing else:\n\n" + text)
+        task = (
+            "Translate this English into simple everyday spoken Hindi in DEVANAGARI script only "
+            "(no Roman letters). Use bolt-chaal Hindi like friends talking. "
+            "Avoid heavy Shuddh Hindi or bookish words. "
+            "Keep roughly the SAME NUMBER OF WORDS as the original English. "
+            "Output ONLY the Hindi translation, nothing else:\n\n" + text
+        )
     last = None
     for i in range(len(keys)):
         _GT_CURSOR = (_GT_CURSOR + 1) % len(keys)
@@ -188,9 +210,19 @@ def _fit_to_target(wav: str, target_ms: int) -> None:
         # pad trailing silence to the EXACT slot: no gaps, no drift
         tmp = str(Path(wav).with_suffix(".pad.wav"))
         subprocess.run(
-            ["ffmpeg", "-y", "-i", wav, "-af", f"apad=whole_dur={target_ms / 1000:.3f}",
-             "-t", f"{target_ms / 1000:.3f}", tmp],
-            check=True, capture_output=True,
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                wav,
+                "-af",
+                f"apad=whole_dur={target_ms / 1000:.3f}",
+                "-t",
+                f"{target_ms / 1000:.3f}",
+                tmp,
+            ],
+            check=True,
+            capture_output=True,
         )
         Path(tmp).replace(wav)
         return
@@ -198,18 +230,29 @@ def _fit_to_target(wav: str, target_ms: int) -> None:
     tmp = str(Path(wav).with_suffix(".fit.wav"))
     subprocess.run(
         ["ffmpeg", "-y", "-i", wav, "-filter:a", f"atempo={tempo:.3f}", tmp],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     # exact length guaranteed: trim any atempo rounding residue
     tmp2 = str(Path(wav).with_suffix(".exact.wav"))
     subprocess.run(
         ["ffmpeg", "-y", "-i", tmp, "-t", f"{target_ms / 1000:.3f}", tmp2],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     Path(tmp2).replace(wav)
 
 
-def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "data/dubbed", name: str = "", target_ms: int = 0, gender: str = "", gindex: int = 0) -> dict:
+def synthesize(
+    text: str,
+    target_lang: str,
+    speaker_label: str,
+    out_dir: str = "data/dubbed",
+    name: str = "",
+    target_ms: int = 0,
+    gender: str = "",
+    gindex: int = 0,
+) -> dict:
     import shutil
     import subprocess
     from pathlib import Path
@@ -233,7 +276,8 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
                 uni = str(Path(out_dir) / f"{base}_22k.wav")
                 subprocess.run(
                     ["ffmpeg", "-y", "-i", wav, "-ar", "22050", "-ac", "1", uni],
-                    check=True, capture_output=True,
+                    check=True,
+                    capture_output=True,
                 )
                 Path(uni).replace(wav)
         except Exception:
@@ -242,16 +286,19 @@ def synthesize(text: str, target_lang: str, speaker_label: str, out_dir: str = "
         if not Path(model).exists():
             raise FileNotFoundError(model)
         subprocess.run(
-            ["python3", "-m", "piper", "--model", model, "--output-file", wav,
-             "--length-scale", "1.000"],
-            input=text.encode(), check=True, capture_output=True, timeout=60,
+            ["python3", "-m", "piper", "--model", model, "--output-file", wav, "--length-scale", "1.000"],
+            input=text.encode(),
+            check=True,
+            capture_output=True,
+            timeout=60,
         )
     try:
         if pitch_factor and shutil.which("ffmpeg"):
             shifted = str(Path(out_dir) / f"{base}_shift.wav")
             subprocess.run(
                 ["ffmpeg", "-y", "-i", wav, "-filter:a", f"asetrate=22050*{pitch_factor},aresample=22050", shifted],
-                check=True, capture_output=True,
+                check=True,
+                capture_output=True,
             )
             Path(shifted).replace(wav)
         _fit_to_target(wav, target_ms)

@@ -1,0 +1,28 @@
+{
+  "title": "Lingofy MVP — 1 SLO + cost",
+  "tags": ["lingofy", "mvp"],
+  "panels": [
+    {
+      "title": "Chunks: done vs total (backlog = total - done)",
+      "targets": [
+        { "expr": "lingofy_chunks_done_total" },
+        { "expr": "lingofy_chunks_total_total" }
+      ]
+    },
+    {
+      "title": "Active sessions",
+      "targets": [{ "expr": "lingofy_sessions_total" }]
+    },
+    {
+      "title": "Paid STT usage (must stay ~0 on free path)",
+      "targets": [
+        { "expr": "lingofy_chirp_calls_total" },
+        { "expr": "lingofy_chirp_minutes_total" }
+      ]
+    },
+    {
+      "title": "Cost guard: Chirp minutes vs $5 cap (~330 min @ $0.016)",
+      "targets": [{ "expr": "lingofy_chirp_minutes_total > 300" }]
+    }
+  ]
+}

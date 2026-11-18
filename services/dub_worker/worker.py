@@ -1,4 +1,5 @@
 """Worker: transcribe via Chirp (diarized) > faster-whisper > mock. $0 offline default."""
+
 import json
 import os
 from pathlib import Path
@@ -15,9 +16,7 @@ def transcribe_chirp(wav_path: str, source_lang: str, max_speakers: int = 3) -> 
 
     project = os.environ["GOOGLE_CLOUD_PROJECT"]
     region = os.getenv("GOOGLE_CLOUD_REGION", "us")
-    client = speech.SpeechClient(
-        client_options={"api_endpoint": f"{region}-speech.googleapis.com"}
-    )
+    client = speech.SpeechClient(client_options={"api_endpoint": f"{region}-speech.googleapis.com"})
     primary = "hi-IN" if source_lang.startswith("hi") else "en-IN"
     config = speech.RecognitionConfig(
         auto_decoding_config=speech.AutoDetectDecodingConfig(),
@@ -142,11 +141,9 @@ def transcribe(wav_path: str, source_lang: str) -> dict:
         from faster_whisper import WhisperModel
 
         global _FW_MODEL
-        try:
-            _FW_MODEL
-        except NameError:
+        if "_FW_MODEL" not in globals():
             _FW_MODEL = WhisperModel("tiny", device="cpu", compute_type="int8")
-        segs, info = _FW_MODEL.transcribe(wav_path, language=source_lang, beam_size=1)
+        segs, _info = _FW_MODEL.transcribe(wav_path, language=source_lang, beam_size=1)
         text = " ".join(s.text.strip() for s in segs).strip()
         if not text:
             raise ValueError("empty transcript")

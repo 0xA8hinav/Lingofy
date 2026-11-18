@@ -1,0 +1,9 @@
+apiVersion: v2
+name: lingofy
+description: "Real-time multilingual video dubbing (MVP: gateway + assembler on k3s)"
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+# NOTE (plan deviation): docs/plan.md sketches umbrella + 3 subcharts.
+# Shipped as one chart with gateway + assembler deployments; the dub-worker
+# queue consumer reuses the full image when the SQS phase lands (see values).

@@ -1,0 +1,3 @@
+# Assembler: stdlib + ffmpeg binary only (installed via apt in the image).
+# No Python dependencies. This file intentionally stays empty so the
+# image stays tiny and the contract stays visible.

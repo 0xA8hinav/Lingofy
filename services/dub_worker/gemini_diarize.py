@@ -3,6 +3,7 @@
 One call per video -> globally consistent speaker IDs, cached per
 session. Key rotation across the SVAR key pool on 429/quota errors.
 """
+
 import json
 import os
 import time
@@ -68,7 +69,6 @@ def diarize_file(audio_path: str, total_s: float) -> list:
 
 def _diarize_long(audio_path: str, total_s: float, part_s: float = 180.0) -> list:
     """Split long audio into parts (API timeouts), diarize each, reconcile IDs."""
-    import subprocess
     import tempfile
     import wave
 
@@ -108,13 +108,12 @@ def _diarize_long(audio_path: str, total_s: float, part_s: float = 180.0) -> lis
     # reconcile part-local IDs -> global via ECAPA on segment centers
     try:
         from services.dub_worker import ecapa as _ec
-        import numpy as _np
 
         wavs = []
         for _i, s in enumerate(all_segs):
             _m = int((s["start"] + s["end"]) / 2 * _sr)
             _h = min(2 * _sr, int((s["end"] - s["start"]) / 2 * _sr) or 2 * _sr)
-            _cut = _vals[max(0, _m - _h):_m + _h]
+            _cut = _vals[max(0, _m - _h) : _m + _h]
             _p = str(tmp / f"seg{_i}.wav")
             with wave.open(_p, "wb") as _o:
                 _o.setnchannels(1)
@@ -198,7 +197,6 @@ def _diarize_transcribe_api(audio_path: str) -> list:
 
 def _extract_words(resp) -> list:
     """Fallback word extraction across response shapes (preview API churn)."""
-    import json as _js
 
     found = []
     seen = set()
@@ -297,8 +295,7 @@ def _off(w, attr: str) -> float:
             return float(v.total_seconds())
         if isinstance(v, str):
             v = v.strip()
-            if v.endswith("s"):
-                v = v[:-1]
+            v = v.removesuffix("s")
             return float(v)
         return float(v or 0)
     except Exception:
@@ -359,7 +356,6 @@ def _words_to_segments(words: list) -> list:
 def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> list:
     """Fallback: 2.5-flash JSON segment prompt (auto-detect count, cap 6)."""
     from google import genai
-    from google.genai import types
 
     keys = _ordered_keys()
     if not keys:
@@ -389,15 +385,15 @@ def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> 
             for s in segs:
                 spk = str(s.get("speaker", "SPEAKER_1"))
                 n = "".join(ch for ch in spk if ch.isdigit()) or "1"
-                out.append({"start": float(s["start"]), "end": float(s["end"]),
-                            "speaker": str(min(max(int(n), 1), 6))})
+                out.append({"start": float(s["start"]), "end": float(s["end"]), "speaker": str(min(max(int(n), 1), 6))})
             segs = sorted(out, key=lambda x: x["start"])
             # 3.5-lite finds boundaries but often returns one label: identity via local ECAPA
             if len(segs) > 1 and len({s["speaker"] for s in segs}) == 1:
                 try:
-                    from services.dub_worker import ecapa as _ec
                     import tempfile
                     import wave
+
+                    from services.dub_worker import ecapa as _ec
 
                     with wave.open(audio_path, "rb") as _w:
                         _sr, _n = _w.getframerate(), _w.getnframes()
@@ -412,7 +408,7 @@ def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> 
                         _b = min(len(_vals), int(_s["end"] * _sr))
                         _mid = (_a + _b) // 2
                         _half = min(2 * _sr, (_b - _a) // 2)
-                        _cut = _vals[_mid - _half:_mid + _half] or _vals[_a:_b]
+                        _cut = _vals[_mid - _half : _mid + _half] or _vals[_a:_b]
                         _p = str(_tmp / f"seg{_i}.wav")
                         with wave.open(_p, "wb") as _o:
                             _o.setnchannels(1)

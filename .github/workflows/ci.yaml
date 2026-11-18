@@ -1,0 +1,58 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install ruff pytest httpx fastapi starlette
+      - run: ruff check services/ scripts/ tests/
+      - run: ruff format --check services/ scripts/ tests/ || true
+      - run: pytest -q
+
+  build-scan:
+    needs: lint-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build images (no push on PR)
+        run: |
+          docker build -f services/assembler/Dockerfile -t lingofy-assembler:${{ github.sha }} .
+          docker build -f services/dub-worker/Dockerfile -t lingofy-full:${{ github.sha }} .
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: lingofy-assembler:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+      - name: Log in + push (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+          for img in lingofy-assembler lingofy-full; do
+            docker tag $img:${{ github.sha }} ${{ env.REGISTRY }}/${{ github.repository_owner }}/$img:${{ github.sha }}
+            docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/$img:${{ github.sha }}
+          done
+
+  helm-template:
+    needs: build-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint deploy/helm/lingofy
+      - run: helm template lingofy deploy/helm/lingofy --dry-run=server 2>/dev/null || helm template lingofy deploy/helm/lingofy

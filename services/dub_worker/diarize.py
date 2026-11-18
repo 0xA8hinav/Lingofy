@@ -4,13 +4,12 @@ Male/female voices differ most in fundamental frequency (~90-150Hz vs
 ~170-280Hz). Energy clustering flips mid-sentence; F0 with a majority
 window keeps one voice per sentence. ECAPA remains the upgrade path.
 """
+
 import struct
 import wave
-from pathlib import Path
 
 
 def _f0_median(vals, sr=16000) -> float:
-    import math
 
     n = len(vals)
     if n < sr // 2:
@@ -24,7 +23,7 @@ def _f0_median(vals, sr=16000) -> float:
     e0 = sum(v * v for v in x) or 1.0
     step = max(1, (hi - lo) // 60)
     for lag in range(lo, hi, step):
-        s = sum(a * b for a, b in zip(x, x[lag:lag + len(x) - lag]))
+        s = sum(a * b for a, b in zip(x, x[lag : lag + len(x) - lag]))
         v = s / e0
         if v > best_v:
             best_v, best_lag = v, lag
@@ -64,7 +63,7 @@ def cluster_session(embeddings: list[list[float]]) -> list[int]:
 def _smooth(labels: list[int], width: int = 5) -> list[int]:
     out = list(labels)
     for i in range(len(out)):
-        win = out[max(0, i - width // 2):i + width // 2 + 1]
+        win = out[max(0, i - width // 2) : i + width // 2 + 1]
         out[i] = max(set(win), key=win.count)
     # snap isolated singles flanked by the same label
     for i in range(1, len(out) - 1):
@@ -97,9 +96,11 @@ def classify_gender_nn(wav_path: str) -> str:
         if _GENDER_CLF is None:
             from transformers import pipeline as _pl
 
-            _GENDER_CLF = _pl("audio-classification",
-                              model="alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech",
-                              device="cpu")  # keep GPU free for demucs
+            _GENDER_CLF = _pl(
+                "audio-classification",
+                model="alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech",
+                device="cpu",
+            )  # keep GPU free for demucs
         out = _GENDER_CLF(wav_path)
         top = max(out, key=lambda x: x["score"])
         if top["score"] < 0.7:

@@ -1,0 +1,45 @@
+# Local parity for the AWS deployment: same images Helm ships, EBS/PVC
+# replaced by bind mounts here. One command: docker compose up --build
+services:
+  gateway:
+    build:
+      context: ../..
+      dockerfile: services/dub-worker/Dockerfile
+    image: lingofy-full:dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - lingofy-data:/app/data
+      - lingofy-output:/app/output
+    environment:
+      ASSEMBLE_POLL_S: "10"
+      # paid providers stay OFF unless explicitly mounted via .env
+      # GOOGLE_CLOUD_PROJECT: ""
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 6G
+
+  assembler:
+    build:
+      context: ../..
+      dockerfile: services/assembler/Dockerfile
+    image: lingofy-assembler:dev
+    volumes:
+      - lingofy-data:/app/data
+      - lingofy-output:/app/output
+    environment:
+      ASSEMBLE_POLL_S: "10"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+volumes:
+  lingofy-data:
+  lingofy-output:

@@ -12,5 +12,7 @@ def test_assemble_orders_by_seq(tmp_path):
 
 
 def test_missing_chunk_marks_unavailable(tmp_path):
-    m = assemble_session("sess_gap", "hi", dubbed_dir=str(tmp_path / "empty"), out_dir=str(tmp_path / "out2"), chunks_total=3)
+    m = assemble_session(
+        "sess_gap", "hi", dubbed_dir=str(tmp_path / "empty"), out_dir=str(tmp_path / "out2"), chunks_total=3
+    )
     assert "unavailable" in m and m["chunks_done"] < m["chunks_total"]

@@ -15,7 +15,5 @@ def test_gateway_rejects_over_500MB():
 
 
 def test_corrupt_video_returns_400():
-    r = client.post(
-        "/v1/sessions/s1/video", files={"file": ("bad.mp4", b"notavideo")}
-    )
+    r = client.post("/v1/sessions/s1/video", files={"file": ("bad.mp4", b"notavideo")})
     assert r.status_code == 400

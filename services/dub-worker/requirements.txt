@@ -1,0 +1,23 @@
+# Dub-worker: full offline AI stack. Heavy on purpose — one image holds
+# ASR + MT + TTS + diarization so a chunk never waits on a network hop.
+# Direct deps only; pip resolves the transitive tree.
+ctranslate2==4.9.0
+faster-whisper==1.2.1
+transformers==4.48.3
+argostranslate==1.11.0
+speechbrain==1.1.2
+demucs==4.1.0
+torch==2.14.1
+torchaudio==2.11.1
+onnxruntime==1.31.0
+piper-tts==1.8.0
+numpy==2.4.2
+scipy==1.17.1
+sentencepiece==0.2.3
+tqdm==4.67.1
+PyYAML==6.0.3
+google-cloud-speech==2.41.0
+google-cloud-storage==3.17.1
+google-genai==3.4.0
+groq==1.7.0
+huggingface_hub>=0.23.2

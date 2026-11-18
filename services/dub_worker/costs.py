@@ -1,4 +1,5 @@
 """Cost ledger: track paid API usage in INR. Append-only JSONL."""
+
 import json
 import time
 from pathlib import Path

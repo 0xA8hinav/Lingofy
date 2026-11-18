@@ -1,0 +1,30 @@
+{{- $asm := printf "%s%s:%s" (ternary (print .Values.global.registry "/") "" (ne .Values.global.registry "")) .Values.images.assembler.repository .Values.images.assembler.tag -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-assembler
+  labels: { app: lingofy-assembler }
+spec:
+  replicas: {{ .Values.assembler.replicas }}
+  selector:
+    matchLabels: { app: lingofy-assembler }
+  template:
+    metadata:
+      labels: { app: lingofy-assembler }
+    spec:
+      containers:
+        - name: assembler
+          image: {{ $asm | quote }}
+          imagePullPolicy: {{ .Values.images.assembler.pullPolicy }}
+          env:
+            - name: ASSEMBLE_POLL_S
+              value: {{ .Values.assembler.pollInterval | quote }}
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: output, mountPath: /app/output }
+          resources: {{ .Values.assembler.resources | toYaml | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: {{ .Release.Name }}-data }
+        - name: output
+          persistentVolumeClaim: { claimName: {{ .Release.Name }}-output }
