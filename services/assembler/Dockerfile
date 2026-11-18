@@ -7,4 +7,4 @@ WORKDIR /app
 COPY services/assembler/ /app/services/assembler/
 COPY services/__init__.py /app/services/__init__.py
 HEALTHCHECK --interval=60s --timeout=5s CMD python3 -c "import services.assembler.assemble" || exit 1
-CMD ["python3", "-m", "services.assembler.assemble"]
+CMD ["python3", "-m", "services.assembler"]
