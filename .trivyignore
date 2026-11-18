@@ -1,0 +1,6 @@
+# Triaged base-image findings. Re-check on every base image bump.
+# CVE-2026-6653 (libxml2, CRITICAL): scanner flags the *mingw* (Windows) build
+# of libxml2. Our images are Debian Linux; the flagged artifact is not
+# present or reachable. No fixed Debian version published as of 2026-11-18.
+# Revisit: trivy image --severity CRITICAL lingofy-assembler:dev
+CVE-2026-6653
