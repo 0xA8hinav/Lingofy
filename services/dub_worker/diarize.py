@@ -98,7 +98,8 @@ def classify_gender_nn(wav_path: str) -> str:
             from transformers import pipeline as _pl
 
             _GENDER_CLF = _pl("audio-classification",
-                              model="alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech")
+                              model="alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech",
+                              device="cpu")  # keep GPU free for demucs
         out = _GENDER_CLF(wav_path)
         top = max(out, key=lambda x: x["score"])
         if top["score"] < 0.7:

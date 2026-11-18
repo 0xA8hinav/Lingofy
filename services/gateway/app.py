@@ -95,7 +95,13 @@ def _run_dub(sid: str):
                     return c["seq"]  # already dubbed via chunk path; skip duplicate synth
                 tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
                 dur_ms = c["end_ms"] - c["start_ms"]
-                synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{c['seq']:04d}_{label}", target_ms=dur_ms, gender=gm["gender"], gindex=gm["gindex"])
+                _v = synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{c['seq']:04d}_{label}", target_ms=dur_ms, gender=gm["gender"], gindex=gm["gindex"])
+                try:
+                    from services.dub_worker.bed import dubbed_with_background
+
+                    dubbed_with_background(c["wav_path"], _v["wav_path"], str(dubbed), f"{c['seq']:04d}_{label}")
+                except Exception:
+                    pass
             except Exception:
                 pass
             return c["seq"]
@@ -285,7 +291,15 @@ def _dub_chunk(sid: str, seq: int) -> str:
             out = synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{seq:04d}_{label}", target_ms=dur_ms, gender=gm["gender"], gindex=gm["gindex"])
         else:
             out = {"wav_path": str(_wav), "mp3_path": str(_wav.with_suffix(".mp3")), "provider": "piper"}
-        assemble_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, out["wav_path"], str(seg))
+        # keep music/SFX from the original, duck the original voice, mix dub on top
+        final_wav = out["wav_path"]
+        try:
+            from services.dub_worker.bed import dubbed_with_background
+
+            final_wav = dubbed_with_background(c["wav_path"], out["wav_path"], str(dubbed), f"{seq:04d}_{label}")
+        except Exception:
+            final_wav = out["wav_path"]
+        assemble_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, final_wav, str(seg))
         try:
             assemble_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, c["wav_path"], str(orig))
         except Exception:
