@@ -24,3 +24,9 @@ worktrees/
 
 # OS
 .DS_Store
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
