@@ -139,21 +139,22 @@ def translate(text: str, source_lang: str, target_lang: str) -> dict:
     return {"target_text": f"[{target_lang}] {text}", "chars_billed": len(text)}
 
 
-_GT_CURSOR = 0
+_GT_CLIENT = None
 
 
-def _translate_gemini(text: str, source_lang: str, target_lang: str) -> str:
-    """Colloquial MT via Gemini 3.5 Flash Lite (free tier, rotated keys).
+def _gemini_client():
+    """One shared client (rotated on failure) instead of a new one per chunk."""
+    global _GT_CLIENT
+    if _GT_CLIENT is None:
+        import json as _js
 
-    Keeps word count close to the original so dubbed audio fits the slot.
-    """
-    global _GT_CURSOR
-    import json as _js
+        with open("/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json") as _kf:
+            keys = _js.load(_kf)["keys"]
+        _GT_CLIENT = [None, keys, [0]]
+    return _GT_CLIENT
 
-    from google import genai
 
-    with open("/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json") as _kf:
-        keys = _js.load(_kf)["keys"]
+def _translate_one(client, text: str, source_lang: str, target_lang: str) -> str:
     if source_lang == "hi":
         task = (
             "Translate this Hindi into simple everyday spoken English, plain words. "
@@ -168,21 +169,88 @@ def _translate_gemini(text: str, source_lang: str, target_lang: str) -> str:
             "Keep roughly the SAME NUMBER OF WORDS as the original English. "
             "Output ONLY the Hindi translation, nothing else:\n\n" + text
         )
+    r = client.models.generate_content(
+        model="gemini-3.5-flash-lite",
+        contents=task,
+        config={"max_output_tokens": 9000},
+    )
+    out = (r.text or "").strip().strip("`").strip()
+    if out.lower().startswith("hindi"):
+        out = out.split("\n", 1)[-1].strip()
+    if not out:
+        raise ValueError("empty translation")
+    return out
+
+
+def _translate_gemini(text: str, source_lang: str, target_lang: str) -> str:
+    """Colloquial MT via Gemini 3.5 Flash Lite (free tier, rotated keys).
+
+    Keeps word count close to the original so dubbed audio fits the slot.
+    """
+    from google import genai as _g
+
+    _c, keys, cursor = _gemini_client()
     last = None
-    for i in range(len(keys)):
-        _GT_CURSOR = (_GT_CURSOR + 1) % len(keys)
+    for _ in range(len(keys)):
+        cursor[0] = (cursor[0] + 1) % len(keys)
         try:
-            client = genai.Client(api_key=keys[_GT_CURSOR])
-            r = client.models.generate_content(model="gemini-3.5-flash-lite", contents=task)
-            out = (r.text or "").strip().strip("`").strip()
-            if out.lower().startswith("hindi"):
-                out = out.split("\n", 1)[-1].strip()
-            if out:
-                return out
+            client = _c or _g.Client(api_key=keys[cursor[0]])
+            _c = client
+            return _translate_one(client, text, source_lang, target_lang)
         except Exception as e:
             last = e
+            _c = None
             continue
     raise RuntimeError(f"gemini translate failed: {last}")
+
+
+def translate_batch(texts: list, source_lang: str, target_lang: str) -> list:
+    """Translate ALL chunk texts in ONE Gemini call (numbered list in/out).
+
+    Returns a list aligned with the input; blanks where the model skipped.
+    """
+    from google import genai as _g
+
+    numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
+    if source_lang == "hi":
+        task = (
+            "Translate each numbered line into simple everyday spoken English, plain words. "
+            "Keep roughly the SAME NUMBER OF WORDS as the original. "
+            "Reply with the same numbers, one translation per line, nothing else:\n\n" + numbered
+        )
+    else:
+        task = (
+            "Translate each numbered line into simple everyday spoken Hindi in DEVANAGARI script only "
+            "(no Roman letters), bolt-chaal style, no Shuddh Hindi. "
+            "Keep roughly the SAME NUMBER OF WORDS as the original. "
+            "Reply with the same numbers, one translation per line, nothing else:\n\n" + numbered
+        )
+    _c, keys, cursor = _gemini_client()
+    for _ in range(len(keys)):
+        cursor[0] = (cursor[0] + 1) % len(keys)
+        try:
+            client = _c or _g.Client(api_key=keys[cursor[0]])
+            _c = client
+            r = client.models.generate_content(
+                model="gemini-3.5-flash-lite",
+                contents=task,
+                config={"max_output_tokens": 9000},
+            )
+            out = (r.text or "").strip().strip("`")
+            got = {}
+            for ln in out.splitlines():
+                ln = ln.strip()
+                if not ln:
+                    continue
+                head, _, rest = ln.partition(".")
+                if head.strip().isdigit():
+                    got[int(head.strip()) - 1] = rest.strip()
+            if len(got) >= max(1, len(texts) // 2):
+                return [got.get(i, "") for i in range(len(texts))]
+        except Exception:
+            _c = None
+            continue
+    return [""] * len(texts)
 
 
 def _wav_ms(path: str) -> int:

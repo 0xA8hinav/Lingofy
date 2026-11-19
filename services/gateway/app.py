@@ -100,7 +100,7 @@ def _run_dub(sid: str):
 
     from services.assembler.assemble import assemble_session
     from services.dub_worker import gemini_diarize as _gd
-    from services.dub_worker.voices import synthesize, translate
+    from services.dub_worker.voices import synthesize, translate_batch
 
     s = SESSIONS.get(sid)
     if not s:
@@ -114,23 +114,48 @@ def _run_dub(sid: str):
         dubbed = _P("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
 
-        def _one(c):
+        # phase 1: slice cached transcripts (instant) for every chunk
+        jobs = []
+        for c in chunks:
             try:
                 text, label = _gd.chunk_text(full_wav, c["start_ms"] / 1000, c["end_ms"] / 1000)
-                if not label:
-                    label = _gd.speaker_at(segs, c["start_ms"] / 1000)
-                if not text:
-                    # transcript cache missing (e.g. quota) -> per-chunk offline STT fallback
+            except Exception:
+                text, label = "", ""
+            if not label:
+                label = _gd.speaker_at(segs, c["start_ms"] / 1000) if segs else "1"
+            if not text:
+                try:  # transcript cache missing -> per-chunk offline STT fallback
                     from services.dub_worker.worker import transcribe as _tx
 
                     r = _tx(c["wav_path"], s["source_lang"])
                     text = r["text"]
                     label = label or r.get("speaker_label") or "1"
+                except Exception:
+                    continue
+            jobs.append((c, text, label or "1"))
+        # phase 2: ONE batched translation call for all chunks (was: 1 call/chunk)
+        from services.dub_worker.voices import translate as _translate_one
+
+        try:
+            tts = translate_batch([t for _, t, _ in jobs], s["source_lang"], s["target_lang"])
+        except Exception:
+            tts = [""] * len(jobs)
+        paired = []
+        for (c, t, lab), tt in zip(jobs, tts):
+            if not tt:
+                try:
+                    tt = _translate_one(t, s["source_lang"], s["target_lang"])["target_text"]
+                except Exception:
+                    continue
+            paired.append((c, lab, tt))
+
+        def _one(item):
+            c, label, tt = item
+            try:
                 gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
                 _wav = dubbed / f"{c['seq']:04d}_{label}.wav"
                 if _wav.exists():
                     return c["seq"]  # already dubbed via chunk path; skip duplicate synth
-                tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
                 dur_ms = c["end_ms"] - c["start_ms"]
                 synthesize(
                     tt,
@@ -150,7 +175,7 @@ def _run_dub(sid: str):
 
         done = 0
         with ThreadPoolExecutor(max_workers=4) as ex:
-            for _ in ex.map(_one, chunks):
+            for _ in ex.map(_one, paired):
                 done += 1
                 SESSIONS[sid]["chunks_done"] = done
         got = len(sorted(dubbed.glob("*.wav")))
