@@ -137,14 +137,9 @@ function pump(){
     const it=pending[nextAppend];delete pending[nextAppend];
     try{
       if(!it.init)sb.timestampOffset=it.off;
-      // keep the buffered window small: drop played-out media so appends stay fast
-      try{
-        const v=document.getElementById('v');
-        if(!it.init&&v&&isFinite(v.currentTime)&&v.currentTime>40&&sb.buffered.length){
-          const end=sb.buffered.end(sb.buffered.length-1);
-          if(end-v.currentTime>60)sb.remove(0,v.currentTime-30);
-        }
-      }catch(_){}
+      // NOTE: no buffer pruning on the MVP path — clips are ~2 min and seeking
+      // needs old chunks buffered. Pruning evicted media behind currentTime-30,
+      // which froze playback on any backward seek (pump never re-fetches).
       appending=true;sb.appendBuffer(it.buf);
       nextAppend++;
     }catch(e){pending[nextAppend]=it;setTimeout(pump,500);return;}
