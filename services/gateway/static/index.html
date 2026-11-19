@@ -103,7 +103,7 @@ async function uploadOriginal(){
 }
 async function go(){
   if(!sid){showErr('Pick a file first — it uploads automatically.');return;}
-  nextN=0;wantN=0;pending=[];appending=false;segments=[];ms=null;sb=null;
+  nextN=0;wantN=0;pending=[];appending=false;segments=[];ms=null;sb=null;nextAppend=0;inflight=new Set();
   $('go').disabled=true;$('err').style.display='none';setPill('working','working');step(1);
   $('st').textContent='Analyzing voices… (one-time per video, cached after)';
   fetch('/v1/sessions/'+sid+'/dub',{method:'POST'});
@@ -121,43 +121,47 @@ async function startMSE(){
     const j0=await (await fetch('/v1/sessions/'+sid+'/chunk/0')).json();
     if(j0.done||!j0.mse_url)throw new Error('empty session');
     const ibuf=await (await fetch(j0.mse_init)).arrayBuffer();
-    pending.push({buf:ibuf,init:true});
-    doAppend();step(2);setPill('dubbing','working');
+    sb.appendBuffer(ibuf); // init segment, no timestamp offset needed
+    step(2);setPill('dubbing','working');
     v.play().catch(()=>{});
+    pump(); // starts pipelined fetch of chunks 0..2
   }catch(e){showErr('Player failed to start: '+e.message+' — try Chrome or Edge.');}
 }
+let nextAppend=0;let inflight=new Set();
 function pump(){
+  // append in-order first, then keep up to 3 server dubs in flight ahead
   if(!sb||sb.updating)return;
-  if(pending.length){doAppend();return;}
-  if(wantN<total){const n=wantN;wantN++;fetchChunk(n);}
-}
-function doAppend(){
-  if(!pending.length||!sb||sb.updating)return;
-  const it=pending.shift();
-  try{
-    if(!it.init)sb.timestampOffset=it.off;
-    // keep the buffered window small: drop played-out media so appends stay fast
+  while(pending[nextAppend]!==undefined&&!sb.updating){
+    const it=pending[nextAppend];delete pending[nextAppend];
     try{
-      const v=document.getElementById('v');
-      if(!it.init&&v&&isFinite(v.currentTime)&&v.currentTime>40&&sb.buffered.length){
-        const end=sb.buffered.end(sb.buffered.length-1);
-        if(end-v.currentTime>60)sb.remove(0,v.currentTime-30);
-      }
-    }catch(_){}
-    appending=true;sb.appendBuffer(it.buf);
-  }catch(e){pending.unshift(it);setTimeout(pump,500);}
+      if(!it.init)sb.timestampOffset=it.off;
+      // keep the buffered window small: drop played-out media so appends stay fast
+      try{
+        const v=document.getElementById('v');
+        if(!it.init&&v&&isFinite(v.currentTime)&&v.currentTime>40&&sb.buffered.length){
+          const end=sb.buffered.end(sb.buffered.length-1);
+          if(end-v.currentTime>60)sb.remove(0,v.currentTime-30);
+        }
+      }catch(_){}
+      appending=true;sb.appendBuffer(it.buf);
+      nextAppend++;
+    }catch(e){pending[nextAppend]=it;setTimeout(pump,500);return;}
+  }
+  if(sb.updating)return;
+  for(let n=nextAppend;n<total&&n<nextAppend+3;n++){if(pending[n]===undefined&&!inflight.has(n)){inflight.add(n);fetchChunk(n);}}
 }
+function doAppend(){pump();}
 async function fetchChunk(n){
-  if(n>=total)return;
+  if(n>=total){inflight.delete(n);return;}
   let j;try{j=await (await fetch('/v1/sessions/'+sid+'/chunk/'+n)).json();}
-  catch(e){setTimeout(()=>{if(n===wantN-1)fetchChunk(n);},1500);return;}
-  if(j.done||!j.mse_url)return;
+  catch(e){inflight.delete(n);setTimeout(()=>{if(!pending[n]){inflight.add(n);fetchChunk(n);}},1500);return;}
+  if(j.done||!j.mse_url){inflight.delete(n);return;}
   const buf=await (await fetch(j.mse_url)).arrayBuffer();
-  pending.push({buf:buf,off:j.start});
+  pending[n]={buf:buf,off:j.start};inflight.delete(n);
   if(!segments.length&&j.speaker){$('spk').textContent='Speaker '+j.speaker+(j.gender&&j.gender!=='unknown'?' · '+j.gender:'');$('dot').className='dot live';}
   $('fill').style.width=Math.round(100*n/total)+'%';
   $('st').textContent='Playing chunk '+(n+1)+'/'+total;
-  doAppend();
+  pump();
 }
 async function pollMeta(){
   let st;try{st=await (await fetch('/v1/sessions/'+sid+'/status')).json();}

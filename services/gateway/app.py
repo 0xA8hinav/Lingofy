@@ -218,6 +218,14 @@ import threading as _th
 _SEGMAPS: dict = {}
 _GENDERS: dict = {}
 _DUB_READY: dict = {}
+_BATCH_READY: dict = {}
+
+
+def _batch_ready(sid: str) -> "_th.Event":
+    ev = _BATCH_READY.get(sid)
+    if ev is None:
+        ev = _BATCH_READY[sid] = _th.Event()
+    return ev
 
 
 def _dub_done(sid: str, seq: int):
@@ -419,6 +427,9 @@ def _dub_chunk(sid: str, seq: int) -> str:
         if _ev is None:
             _ev = _DUB_READY[(sid, seq)] = _th.Event()
         _ev.wait(timeout=20)
+        # Prefer the warmed batch translation; only fall back to a per-chunk
+        # API call if warm-up hasn't finished (it sets BATCH_READY when done).
+        _batch_ready(sid).wait(timeout=60)
         if text and _gd_chunk_is_translated:
             tt = text
         else:
@@ -631,6 +642,8 @@ def _warm_maps(sid: str):
             pass
     except Exception:
         pass
+    finally:
+        _batch_ready(sid).set()
 
 
 @app.get("/v1/sessions/{sid}/status")
