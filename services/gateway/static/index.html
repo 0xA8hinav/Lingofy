@@ -74,7 +74,7 @@ footer{color:#525b7a;font-size:12px;text-align:center;margin-top:26px}
 <footer>Lingofy MVP · local-first dubbing · Piper + Argos + Gemini diarization · $0 default path</footer>
 </div>
 <script>
-let sid=null,total=0,totalS=0,timer=null,ms=null,sb=null,msUrl=null,origUrl=null,segments=[],nextN=0,pending=[],wantLang='hi';
+let sid=null,total=0,totalS=0,timer=null,ms=null,sb=null,msUrl=null,origUrl=null,segments=[],nextN=0,pending=[],wantLang='hi',wantN=0,appending=false;
 const $=id=>document.getElementById(id);
 function setPill(t,cls){const p=$('pill');p.textContent=t;p.className='pill '+cls;}
 function showErr(m){const e=$('err');e.style.display='block';e.textContent=m;setPill('error','error');}
@@ -96,7 +96,7 @@ async function go(){
   let u;try{u=await (await fetch('/v1/sessions/'+sid+'/video',{method:'POST',body:fd})).json();}
   catch(e){showErr('Upload failed: '+e);$('go').disabled=false;return;}
   if(u.error||!u.chunks_total){showErr('Upload rejected: '+(u.error||'unknown file'));$('go').disabled=false;return;}
-  total=u.chunks_total;totalS=u.total_s||total*8;nextN=0;pending=[];segments=[];
+  total=u.chunks_total;totalS=u.total_s||total*8;nextN=0;wantN=0;pending=[];appending=false;segments=[];
   $('st').textContent='Analyzing voices… (one-time per video, cached after)';
   startMSE();
   timer=setInterval(pollMeta,2000);

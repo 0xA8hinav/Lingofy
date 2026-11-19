@@ -1,0 +1,28 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - generic [ref=e4]: L
+    - heading "Lingofy" [level=1] [ref=e6]
+    - generic [ref=e7]: idle
+  - paragraph [ref=e8]: Upload a video, pick a direction, hit Dub. Playback starts in seconds with the full timeline; the dubbed track renders ahead of you.
+  - generic [ref=e9]:
+    - generic [ref=e13]:
+      - generic [ref=e14]:
+        - checkbox "Dubbed audio" [checked] [ref=e15]
+        - text: Dubbed audio
+      - generic [ref=e16]: uncheck for original
+    - generic [ref=e17]:
+      - generic [ref=e18] [cursor=pointer]: Drop a video here, or click to browsemp4 / mov / webm / mkv — trimmed ≤500MB works best
+      - generic [ref=e20]:
+        - generic [ref=e21]:
+          - button "EN → HI" [ref=e22] [cursor=pointer]
+          - button "HI → EN" [ref=e23] [cursor=pointer]
+        - button "Dub it" [disabled] [ref=e24]
+      - generic [ref=e26]: Pick a file to begin.
+      - generic [ref=e27]: —
+      - list [ref=e30]:
+        - listitem [ref=e31]: Upload
+        - listitem [ref=e32]: Analyze voices
+        - listitem [ref=e33]: Dubbing
+        - listitem [ref=e34]: Ready
+      - generic [ref=e35]: manifest appears here after the dub completes
+  - contentinfo [ref=e36]: Lingofy MVP · local-first dubbing · Piper + Argos + Gemini diarization · $0 default path
