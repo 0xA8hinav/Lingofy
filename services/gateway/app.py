@@ -382,6 +382,7 @@ def _dub_chunk(sid: str, seq: int) -> str:
             "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else "",
             "mse_url": f"/output/{sid}/{mse.name}" if mse.exists() else "",
             "mse_init": f"/output/{sid}/mse_init.mp4",
+            "codecs": s.get("mse_codecs") or "avc1.42C01F,mp4a.40.2",
             "start": c["start_ms"] / 1000,
             "dur": _dur / 1000,
             "speaker": label,
@@ -477,10 +478,10 @@ def _dub_chunk(sid: str, seq: int) -> str:
             assemble_chunk(s["src"], c["start_ms"] / 1000, dur_ms / 1000, c["wav_path"], str(orig))
         except Exception:
             pass
-        # MSE streaming segment (fragmented mp4, same encoder settings every chunk)
+        # MSE streaming segment (copy video: native H.264, ~0.1s vs ~5s re-encode)
         mse = OUTPUT / sid / f"mse_{seq:04d}.m4s"
         try:
-            from services.assembler.assemble import assemble_mse_chunk, split_fmp4
+            from services.assembler.assemble import assemble_mse_chunk, init_codec_string, split_fmp4
 
             if not mse.exists():
                 full = OUTPUT / sid / f"_full_{seq:04d}.mp4"
@@ -489,6 +490,10 @@ def _dub_chunk(sid: str, seq: int) -> str:
                 initp = OUTPUT / sid / "mse_init.mp4"
                 if not initp.exists():
                     initp.write_bytes(_init)
+                    try:
+                        s["mse_codecs"] = init_codec_string(_init)
+                    except Exception:
+                        pass
                 mse.write_bytes(media)
                 try:
                     full.unlink()
@@ -504,6 +509,7 @@ def _dub_chunk(sid: str, seq: int) -> str:
             "orig_url": f"/output/{sid}/{orig.name}" if orig.exists() else "",
             "mse_url": f"/output/{sid}/{mse.name}" if mse.exists() else "",
             "mse_init": f"/output/{sid}/mse_init.mp4",
+            "codecs": s.get("mse_codecs") or "avc1.42C01F,mp4a.40.2",
             "start": c["start_ms"] / 1000,
             "dur": dur_ms / 1000,
             "speaker": label,
