@@ -160,6 +160,20 @@ def _diarize_long(audio_path: str, total_s: float, part_s: float = 180.0) -> lis
     return sorted(all_segs, key=lambda x: x["start"])
 
 
+def genai_client(key: str):
+    """Single place all Gemini clients come from: v1beta API + hard timeout.
+
+    Without the timeout a stalled request hangs a chunk forever and playback
+    freezes behind it — that was the growing-buffer stall.
+    """
+    from google import genai
+
+    return genai.Client(
+        api_key=key,
+        http_options={"api_version": "v1beta", "timeout": 120000},
+    )
+
+
 def _diarize_transcribe_api(audio_path: str) -> list:
     from google.genai import interactions as I
 
@@ -169,9 +183,7 @@ def _diarize_transcribe_api(audio_path: str) -> list:
     last_err = None
     for key in keys:
         try:
-            from google import genai
-
-            client = genai.Client(api_key=key, http_options={"api_version": "v1beta"})
+            client = genai_client(key)
             up = client.files.upload(file=audio_path)
             uri = getattr(up, "uri", None) or getattr(up, "name", "")
             mime = getattr(up, "mime_type", None) or "audio/wav"
@@ -417,9 +429,7 @@ def translate_segments(audio_path: str, source_lang: str, target_lang: str) -> l
         got = None
         for key in _ordered_keys():
             try:
-                from google import genai
-
-                client = genai.Client(api_key=key)
+                client = genai_client(key)
                 r = client.models.generate_content(
                     model="gemini-3.5-flash-lite",
                     contents=task,
@@ -528,7 +538,6 @@ def _words_to_segments(words: list) -> list:
 
 def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> list:
     """Fallback: 2.5-flash JSON segment prompt (auto-detect count, cap 6)."""
-    from google import genai
 
     keys = _ordered_keys()
     if not keys:
@@ -539,7 +548,7 @@ def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> 
     last_err = None
     for key in keys:
         try:
-            client = genai.Client(api_key=key, http_options={"api_version": "v1beta"})
+            client = genai_client(key)
             from google.genai import types as _t
 
             resp = client.models.generate_content(

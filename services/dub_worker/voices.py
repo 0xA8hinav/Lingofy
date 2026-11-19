@@ -86,18 +86,18 @@ def gemini_tts(text: str, voice: str, out_wav: str) -> None:
     import os
     import wave as _w
 
-    from google import genai
-
     with open(os.path.expanduser("~/.config/lingofy/gemini_keys_tts.json")) as _kf:
         keys = _js.load(_kf)["keys"]
 
     from google.genai import types as _t
 
+    from services.dub_worker.gemini_diarize import genai_client as _genai_client
+
     last = None
     for i, key in enumerate(keys):
         try:
             _tts_gate()
-            client = genai.Client(api_key=key, http_options={"api_version": "v1beta"})
+            client = _genai_client(key)
             resp = client.models.generate_content(
                 model="gemini-2.5-flash-preview-tts",
                 contents=text,
@@ -237,14 +237,14 @@ def _translate_gemini(text: str, source_lang: str, target_lang: str) -> str:
 
     Keeps word count close to the original so dubbed audio fits the slot.
     """
-    from google import genai as _g
+    from services.dub_worker.gemini_diarize import genai_client as _gc
 
     _c, keys, cursor = _gemini_client()
     last = None
     for _ in range(len(keys)):
         cursor[0] = (cursor[0] + 1) % len(keys)
         try:
-            client = _c or _g.Client(api_key=keys[cursor[0]])
+            client = _c or _gc(keys[cursor[0]])
             _c = client
             return _translate_one(client, text, source_lang, target_lang)
         except Exception as e:
@@ -259,8 +259,6 @@ def translate_batch(texts: list, source_lang: str, target_lang: str) -> list:
 
     Returns a list aligned with the input; blanks where the model skipped.
     """
-    from google import genai as _g
-
     numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
     if source_lang == "hi":
         task = (
@@ -274,11 +272,13 @@ def translate_batch(texts: list, source_lang: str, target_lang: str) -> list:
             "Keep roughly the SAME NUMBER OF WORDS as the original. "
             "Reply with the same numbers, one translation per line, nothing else:\n\n" + numbered
         )
+    from services.dub_worker.gemini_diarize import genai_client as _gc2
+
     _c, keys, cursor = _gemini_client()
     for _ in range(len(keys)):
         cursor[0] = (cursor[0] + 1) % len(keys)
         try:
-            client = _c or _g.Client(api_key=keys[cursor[0]])
+            client = _c or _gc2(keys[cursor[0]])
             _c = client
             r = client.models.generate_content(
                 model="gemini-3.5-flash-lite",

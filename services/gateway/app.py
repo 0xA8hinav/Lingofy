@@ -502,7 +502,10 @@ def _dub_chunk(sid: str, seq: int) -> str:
         except Exception:
             pass
         _marks["mse"] = round(_t.time() - _t0, 2)
-        print(f"[dub-timing] sid={sid} seq={seq} {dur_ms}ms " + " ".join(f"{k}={v}s" for k, v in _marks.items()), flush=True)
+        print(
+            f"[dub-timing] sid={sid} seq={seq} {dur_ms}ms " + " ".join(f"{k}={v}s" for k, v in _marks.items()),
+            flush=True,
+        )
         SESSIONS[sid]["chunks_done"] = max(s.get("chunks_done", 0), seq + 1)
         return {
             "url": f"/output/{sid}/{seg.name}",

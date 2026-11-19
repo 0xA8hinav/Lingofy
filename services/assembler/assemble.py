@@ -129,18 +129,42 @@ def assemble_mse_chunk(src_video: str, start_s: float, dur_s: float, dubbed_wav:
     if not (Path(src_video).suffix.lower() in (".mp4", ".mov", ".webm", ".mkv") and shutil.which("ffmpeg")):
         shutil.copy(dubbed_wav, out_path)
         return out_path
-    base = ["ffmpeg", "-y", "-ss", str(start_s), "-t", str(dur_s), "-i", src_video,
-            "-i", dubbed_wav, "-map", "0:v:0", "-map", "1:a:0",
-            "-c:a", "aac", "-ar", "44100", "-ac", "2",
-            "-movflags", "empty_moov+default_base_moof+frag_keyframe", "-f", "mp4", out_path]
+    base = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(start_s),
+        "-t",
+        str(dur_s),
+        "-i",
+        src_video,
+        "-i",
+        dubbed_wav,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:a",
+        "aac",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-movflags",
+        "empty_moov+default_base_moof+frag_keyframe",
+        "-f",
+        "mp4",
+        out_path,
+    ]
     copy_cmd = base[:14] + ["-c:v", "copy"] + base[14:]
     try:
         subprocess.run(copy_cmd, check=True, capture_output=True)
         return out_path
     except Exception:
         pass
-    subprocess.run(base[:14] + ["-c:v", "libopenh264", "-b:v", "1200k", "-g", "240"] + base[14:],
-                   check=True, capture_output=True)
+    subprocess.run(
+        base[:14] + ["-c:v", "libopenh264", "-b:v", "1200k", "-g", "240"] + base[14:], check=True, capture_output=True
+    )
     return out_path
 
 
