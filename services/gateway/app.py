@@ -132,7 +132,16 @@ def _run_dub(sid: str):
                     return c["seq"]  # already dubbed via chunk path; skip duplicate synth
                 tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
                 dur_ms = c["end_ms"] - c["start_ms"]
-                synthesize(tt, s["target_lang"], label, str(dubbed), name=f"{c['seq']:04d}_{label}", target_ms=dur_ms, gender=gm["gender"], gindex=gm["gindex"])
+                synthesize(
+                    tt,
+                    s["target_lang"],
+                    label,
+                    str(dubbed),
+                    name=f"{c['seq']:04d}_{label}",
+                    target_ms=dur_ms,
+                    gender=gm["gender"],
+                    gindex=gm["gindex"],
+                )
                 # NOTE (showcase): background-bed mixing disabled — voice-only dub for speed.
                 # See services/dub_worker/bed.py if the Demucs/RMS bed path is revived.
             except Exception:
