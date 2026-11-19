@@ -220,7 +220,6 @@ def _session_genders(sid: str) -> dict:
         return _GENDERS[sid]
     from services.dub_worker import diarize as _dz
 
-    s = SESSIONS.get(sid, {})
     try:
         segs = _session_segments(sid)
     except Exception:
