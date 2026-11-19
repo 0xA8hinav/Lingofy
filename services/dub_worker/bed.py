@@ -62,16 +62,41 @@ def _dilate(mask, k=3):
     return out
 
 
-def make_bed(src_wav: str, out_wav: str, duck: float = 0.10) -> str:
-    """Write a bed wav: original audio with its speech ducked, ambience kept."""
+def make_bed(src_wav: str, out_wav: str, duck: float = 0.08, fade_ms: int = 150) -> str:
+    """Write a bed wav: original audio with its speech ducked, ambience kept.
+
+    Gain moves on smoothstep ramps (default 150 ms) so ducking fades in
+    and out instead of clicking. Edge samples are untouched so consecutive
+    chunk beds join seamlessly.
+    """
     samples, sr = _read_wav(src_wav)
     mask = _dilate(speech_mask(samples, sr))
     step = max(1, int(sr * FRAME_MS / 1000))
+    n_frames = max(1, (len(samples) + step - 1) // step)
+    while len(mask) < n_frames:
+        mask.append(False)
+    target = [duck if m else 1.0 for m in mask[:n_frames]]
+    fade_n = max(1, round(fade_ms / FRAME_MS))
+    gain = list(target)
+    # smooth only interior transitions; leave first/last frames hard for clean joins
+    for i in range(1, n_frames - 1):
+        lo = max(1, i - fade_n)
+        hi = min(n_frames - 2, i + fade_n)
+        window = target[lo : hi + 1]
+        if min(window) < max(window):
+            t = (i - lo) / max(1, hi - lo)
+            a, b = target[lo], target[hi]
+            s = t * t * (3 - 2 * t)  # smoothstep
+            gain[i] = a + (b - a) * s
+        else:
+            gain[i] = target[i]
     out = []
     for idx, s in enumerate(samples):
-        fi = idx // step
-        g = duck if (fi < len(mask) and mask[fi]) else 1.0
-        out.append(int(s * g))
+        fi = min(idx // step, n_frames - 1)
+        nxt = min(fi + 1, n_frames - 1)
+        frac = (idx % step) / step
+        g = gain[fi] * (1 - frac) + gain[nxt] * frac
+        out.append(int(max(-32768, min(32767, s * g))))
     with wave.open(out_wav, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -112,19 +137,69 @@ def mix_voice_bed(voice_wav: str, bed_wav: str, out_wav: str, bed_gain: float = 
     return out_wav
 
 
-def dubbed_with_background(chunk_wav: str, voice_wav: str, workdir: str, name: str) -> str:
-    """One call: build bed from the chunk, mix the voice over it.
+def mix_voice_over_gaps(voice_wav: str, src_chunk_wav: str, out_wav: str, fade_ms: int = 60) -> str:
+    """Dubbed voice where the source has speech, ORIGINAL audio everywhere else.
 
-    Tries Demucs (GPU, model cached in-process) for true separation; falls
-    back to the RMS ducking bed if the GPU is unavailable or busy.
+    No bed under speech at all — the original voice can never bleed through.
+    Gaps keep the real room tone / music / SFX. Short crossfades so joins
+    never click. The voice track must already be fitted to the chunk length.
     """
+    import shutil
+    import subprocess
+    import tempfile
+
+    voice, sr = _read_wav(voice_wav)
+    try:
+        src, sr2 = _read_wav(src_chunk_wav)
+    except Exception:
+        shutil.copy(voice_wav, out_wav)
+        return out_wav
+    if sr2 != sr and shutil.which("ffmpeg"):
+        tmp = tempfile.mktemp(suffix=".wav")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", src_chunk_wav, "-ac", "1", "-ar", str(sr), tmp], check=True, capture_output=True
+        )
+        src, _ = _read_wav(tmp)
+    n = max(len(voice), len(src))
+    voice += [0] * (n - len(voice))
+    src += [0] * (n - len(src))
+    mask = _dilate(speech_mask(src, sr), k=2)
+    step = max(1, int(sr * FRAME_MS / 1000))
+    n_frames = max(1, (n + step - 1) // step)
+    while len(mask) < n_frames:
+        mask.append(False)
+    fade = max(1, int(sr * fade_ms / 1000))
+    out = list(src)
+    i = 0
+    while i < n:
+        fi = min(i // step, n_frames - 1)
+        if not mask[fi]:
+            i += 1
+            continue
+        j = i
+        while j < n and mask[min(j // step, n_frames - 1)]:
+            j += 1
+        for k in range(i, j):  # crossfade the edges of each speech span
+            w = 1.0
+            dl, dr = k - i, j - 1 - k
+            if dl < fade:
+                w = dl / fade
+            if dr < fade:
+                w = min(w, dr / fade)
+            out[k] = int(max(-32768, min(32767, voice[k] * w + src[k] * (1 - w))))
+        i = j
+    with wave.open(out_wav, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(struct.pack("<" + "h" * len(out), *out))
+    return out_wav
+
+
+def dubbed_with_background(chunk_wav: str, voice_wav: str, workdir: str, name: str) -> str:
+    """Voice where the source speaks, original audio in the gaps (no bed under speech)."""
     Path(workdir).mkdir(parents=True, exist_ok=True)
-    bed = str(Path(workdir) / f"{name}_bed.wav")
-    mix = str(Path(workdir) / f"{name}_mix.wav")
-    if not separate_demucs(chunk_wav, bed):
-        make_bed(chunk_wav, bed)
-    mix_voice_bed(voice_wav, bed, mix)
-    return mix
+    return mix_voice_over_gaps(voice_wav, chunk_wav, str(Path(workdir) / f"{name}_mix.wav"))
 
 
 _DEMUCS = None

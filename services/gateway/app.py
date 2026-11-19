@@ -150,6 +150,8 @@ def _run_dub(sid: str):
             paired.append((c, lab, tt))
 
         def _one(item):
+            import os as _os
+
             c, label, tt = item
             try:
                 gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
@@ -157,7 +159,7 @@ def _run_dub(sid: str):
                 if _wav.exists():
                     return c["seq"]  # already dubbed via chunk path; skip duplicate synth
                 dur_ms = c["end_ms"] - c["start_ms"]
-                synthesize(
+                out = synthesize(
                     tt,
                     s["target_lang"],
                     label,
@@ -167,8 +169,14 @@ def _run_dub(sid: str):
                     gender=gm["gender"],
                     gindex=gm["gindex"],
                 )
-                # NOTE (showcase): background-bed mixing disabled — voice-only dub for speed.
-                # See services/dub_worker/bed.py if the Demucs/RMS bed path is revived.
+                try:  # voice where source speaks, original audio in the gaps
+                    from services.dub_worker.bed import mix_voice_over_gaps
+
+                    mixed = str(_wav.with_suffix(".mix.wav"))
+                    mix_voice_over_gaps(out["wav_path"], c["wav_path"], mixed)
+                    _os.replace(mixed, str(_wav))
+                except Exception:
+                    pass
             except Exception:
                 pass
             return c["seq"]
@@ -401,6 +409,8 @@ def _dub_chunk(sid: str, seq: int) -> str:
         dubbed.mkdir(parents=True, exist_ok=True)
         _wav = dubbed / f"{seq:04d}_{label}.wav"
         if not _wav.exists():
+            import os as _os
+
             out = synthesize(
                 tt,
                 s["target_lang"],
@@ -411,6 +421,19 @@ def _dub_chunk(sid: str, seq: int) -> str:
                 gender=gm["gender"],
                 gindex=gm["gindex"],
             )
+            try:  # voice where source speaks, original audio in the gaps
+                from services.dub_worker.bed import mix_voice_over_gaps
+
+                mixed = str(_wav.with_suffix(".mix.wav"))
+                mix_voice_over_gaps(out["wav_path"], c["wav_path"], mixed)
+                _os.replace(mixed, str(_wav))
+            except Exception:
+                pass
+            out = {
+                "wav_path": str(_wav),
+                "mp3_path": str(_wav.with_suffix(".mp3")),
+                "provider": out.get("provider", "piper"),
+            }
         else:
             out = {"wav_path": str(_wav), "mp3_path": str(_wav.with_suffix(".mp3")), "provider": "piper"}
         # Showcase build: voice-only dub (background-bed path parked in bed.py).

@@ -346,7 +346,11 @@ def _group_sentences(words: list) -> list:
     segs, cur = [], None
     for w in words:
         txt = w.get("word", "")
-        if cur and (w.get("speaker") != cur["speaker"] or w["start"] - cur["end"] > 0.8 or cur["text"].rstrip().endswith((".", "?", "!", "।"))):
+        if cur and (
+            w.get("speaker") != cur["speaker"]
+            or w["start"] - cur["end"] > 0.8
+            or cur["text"].rstrip().endswith((".", "?", "!", "।"))
+        ):
             segs.append(cur)
             cur = None
         if cur is None:
@@ -396,12 +400,12 @@ def translate_segments(audio_path: str, source_lang: str, target_lang: str) -> l
         return []
     out = []
     for off in range(0, len(sentences), 40):
-        blk = sentences[off:off + 40]
+        blk = sentences[off : off + 40]
         for _s in blk:
             _s["speaker"] = _norm_spk(_s.get("speaker"))
         lines = "\n".join(
-            f"{i + 1}. [{s['start']:.2f}-{s['end']:.2f}|{s['speaker']}] {s['text']}"
-            for i, s in enumerate(blk))
+            f"{i + 1}. [{s['start']:.2f}-{s['end']:.2f}|{s['speaker']}] {s['text']}" for i, s in enumerate(blk)
+        )
         task = (
             f"Translate each numbered sentence into {style} "
             "Keep roughly the SAME NUMBER OF WORDS as the original. "
@@ -486,7 +490,7 @@ def chunk_translated(audio_path: str, target_lang: str, start_s: float, end_s: f
         if s["start"] < start_s and s["end"] > end_s:
             mid = len(words) // 2
             half = max(1, n // 2)
-            words = words[max(0, mid - half):mid + half] or words
+            words = words[max(0, mid - half) : mid + half] or words
         elif s["start"] < start_s:
             words = words[-n:]
         else:
@@ -497,7 +501,6 @@ def chunk_translated(audio_path: str, target_lang: str, start_s: float, end_s: f
     for _, s0, s1, lab in parts:
         votes[lab] = votes.get(lab, 0) + (s1 - s0)
     return text, max(votes, key=votes.get) if votes else ("", "")
-
 
 
 def _words_to_segments(words: list) -> list:
@@ -553,7 +556,13 @@ def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> 
             segs = json.loads(text)
             out = []
             for s in segs:
-                out.append({"start": float(s["start"]), "end": float(s["end"]), "speaker": _norm_spk(s.get("speaker", "SPEAKER_1"))})
+                out.append(
+                    {
+                        "start": float(s["start"]),
+                        "end": float(s["end"]),
+                        "speaker": _norm_spk(s.get("speaker", "SPEAKER_1")),
+                    }
+                )
             segs = sorted(out, key=lambda x: x["start"])
             # 3.5-lite finds boundaries but often returns one label: identity via local ECAPA
             if len(segs) > 1 and len({s["speaker"] for s in segs}) == 1:
