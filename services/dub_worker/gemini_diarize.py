@@ -456,7 +456,11 @@ def translate_segments(audio_path: str, source_lang: str, target_lang: str) -> l
 
 
 def chunk_translated(audio_path: str, target_lang: str, start_s: float, end_s: float):
-    """Slice the cached TRANSLATED segments for [start, end] -> (text, speaker)."""
+    """Slice the cached TRANSLATED segments for [start, end] -> (text, speaker).
+
+    Boundary-crossing sentences are clipped proportionally so a long turn is
+    NEVER spoken in full by two adjacent chunks (that was the repeat bug).
+    """
     p = translated_segs_path(audio_path, target_lang)
     if not p.exists():
         return "", ""
@@ -467,12 +471,32 @@ def chunk_translated(audio_path: str, target_lang: str, start_s: float, end_s: f
     use = [s for s in segs if s["end"] > start_s and s["start"] < end_s]
     if not use:
         return "", ""
-    text = " ".join(s["text"] for s in use).strip()
-    votes: dict = {}
+    parts = []  # (text, lo, hi, speaker)
     for s in use:
         lab = _norm_spk(s.get("speaker", "1"))
-        votes[lab] = votes.get(lab, 0) + (s["end"] - s["start"])
-    return text, max(votes, key=votes.get)
+        words = s["text"].split()
+        if not words:
+            continue
+        lo, hi = max(s["start"], start_s), min(s["end"], end_s)
+        frac = (hi - lo) / max(0.01, s["end"] - s["start"])
+        if frac >= 0.85:
+            parts.append((s["text"], lo, hi, lab))
+            continue
+        n = max(1, round(len(words) * frac))
+        if s["start"] < start_s and s["end"] > end_s:
+            mid = len(words) // 2
+            half = max(1, n // 2)
+            words = words[max(0, mid - half):mid + half] or words
+        elif s["start"] < start_s:
+            words = words[-n:]
+        else:
+            words = words[:n]
+        parts.append((" ".join(words), lo, hi, lab))
+    text = " ".join(p[0] for p in parts).strip()
+    votes: dict = {}
+    for _, s0, s1, lab in parts:
+        votes[lab] = votes.get(lab, 0) + (s1 - s0)
+    return text, max(votes, key=votes.get) if votes else ("", "")
 
 
 
