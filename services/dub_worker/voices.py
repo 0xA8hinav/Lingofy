@@ -195,6 +195,22 @@ def _translate_one(client, text: str, source_lang: str, target_lang: str) -> str
     return out
 
 
+def _tts_flag_on() -> bool:
+    """Gemini TTS enabled via env OR flag file.
+
+    The flag file exists because launcher shells may not propagate inline
+    env vars to the server process — a file is unambiguous.
+    """
+    import os
+
+    if os.environ.get("LINGOFY_USE_GEMINI_TTS"):
+        return True
+    try:
+        return os.path.exists(os.path.expanduser("~/.config/lingofy/enable_gemini_tts"))
+    except Exception:
+        return False
+
+
 def _translate_gemini(text: str, source_lang: str, target_lang: str) -> str:
     """Colloquial MT via Gemini 3.5 Flash Lite (free tier, rotated keys).
 
@@ -345,10 +361,9 @@ def synthesize(
     model = str(Path(VOICE_DIR) / f"{voice}.onnx")
     vfull = voice_for(speaker_label, target_lang, gender, gindex)
     pitch_factor = 1.12 if vfull.endswith("+pitch-shift") else 0.88 if vfull.endswith("+pitch-shift2") else 0.0
-    import os as _os
 
     provider_used = "piper"
-    if _os.getenv("LINGOFY_USE_GEMINI_TTS"):
+    if _tts_flag_on():
         try:
             gemini_tts(text, gemini_voice_for(speaker_label, gender), wav)
             provider_used = "gemini-tts"

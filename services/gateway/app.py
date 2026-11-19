@@ -663,8 +663,11 @@ def manifest(sid: str):
 @app.get("/v1/cost")
 def cost():
     from services.dub_worker import costs as _costs
+    from services.dub_worker.voices import _tts_flag_on
 
-    return _costs.totals()
+    out = _costs.totals()
+    out["tts_engine"] = "gemini-tts" if _tts_flag_on() else "piper"
+    return out
 
 
 @app.get("/", response_class=HTMLResponse)
