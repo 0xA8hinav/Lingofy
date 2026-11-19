@@ -35,6 +35,129 @@ GENDER_VOICES = {
 GEMINI_MALE = ["Puck", "Charon", "Fenrir", "Orus", "Zephyr"]
 GEMINI_FEMALE = ["Kore", "Aoede", "Leda", "Callirrhoe", "Sulafat"]
 
+# Sarvam Bulbul v4-flash Hindi + English personas, gender-matched.
+# Deterministic per (speaker, gender, index) so voices stay stable across chunks.
+SARVAM_VOICES = {
+    "male": {
+        "hi": ["kabir_hi_conversational", "amit_hi_conversational", "manan_hi_conversational", "sumit_hi_conversational"],
+        "en": ["shubh_en_narration", "rohan_en_recovery", "varun_en_ads", "dev_en_conversational"],
+    },
+    "female": {
+        "hi": ["kavya_hi_conversational", "ritu_hi_conversation", "roopa_hi_conversational", "sanchita_hi_assistant"],
+        "en": ["simran_en_narration", "neha_en_customer", "ritu_hi_conversation", "roopa_hi_conversational"],
+    },
+}
+SARVAM_KEY_FILE = "~/.config/lingofy/sarvam.json"
+
+
+def sarvam_voice_for(speaker_label: str, lang: str, gender: str = "", gindex: int = 0) -> str:
+    pool = SARVAM_VOICES.get(gender, {}).get(lang) or []
+    if pool:
+        return pool[gindex % len(pool)]
+    # Neutral fallback: conversational Hindi voices read either gender acceptably.
+    neutral = {"hi": "kabir_hi_conversational", "en": "shubh_en_narration"}
+    base = [neutral.get(lang, neutral["en"])]
+    pool = SARVAM_VOICES["male" if str(speaker_label) in ("1", "3", "5") else "female"][lang]
+    return pool[gindex % len(pool)] if pool else base[0]
+
+
+_SARVAM_KEYS: list | None = None
+_SARVAM_CURSOR = [0]
+
+
+def sarvam_keys() -> list:
+    """All configured Sarvam keys (primary + backup). Never logged."""
+    import json as _js
+    import os
+
+    global _SARVAM_KEYS
+    if _SARVAM_KEYS is None:
+        _SARVAM_KEYS = []
+        try:
+            with open(os.path.expanduser(SARVAM_KEY_FILE)) as _kf:
+                data = _js.load(_kf)
+            if isinstance(data.get("keys"), list):
+                _SARVAM_KEYS.extend(k for k in data["keys"] if k)
+            if data.get("api_key"):
+                _SARVAM_KEYS.append(data["api_key"])
+            seen, uniq = set(), []
+            for k in _SARVAM_KEYS:
+                if k not in seen:
+                    seen.add(k)
+                    uniq.append(k)
+            _SARVAM_KEYS = uniq
+        except Exception:
+            _SARVAM_KEYS = []
+    return _SARVAM_KEYS
+
+
+def sarvam_key() -> str | None:
+    keys = sarvam_keys()
+    if not keys:
+        return None
+    k = keys[_SARVAM_CURSOR[0] % len(keys)]
+    _SARVAM_CURSOR[0] += 1
+    return k
+
+
+def sarvam_tts(text: str, lang: str, voice: str, out_wav: str, pace: float = 1.0) -> dict:
+    """Sarvam Bulbul v4-flash TTS -> 22050 Hz mono wav. Raises on failure (caller falls back).
+
+    Tries each configured key in turn so quota/rate-limit on one key fails
+    over to the next instead of killing the chunk.
+    """
+    import base64
+    import json as _js
+    import urllib.request
+    import urllib.error
+    import wave as _w
+
+    keys = sarvam_keys()
+    if not keys:
+        raise RuntimeError("no sarvam key")
+    lang_code = "hi-IN" if str(lang).lower().startswith("hi") else "en-IN"
+    body = _js.dumps({
+        "text": text,
+        "target_language_code": lang_code,
+        "speaker": voice,
+        "model": "bulbul:v4-flash",
+        "pace": min(2.0, max(0.5, pace)),
+        "speech_sample_rate": 22050,
+        "output_audio_codec": "wav",
+    }).encode()
+    last = None
+    for key in keys:
+        try:
+            req = urllib.request.Request(
+                "https://api.sarvam.ai/text-to-speech",
+                data=body,
+                headers={"Content-Type": "application/json", "api-subscription-key": key},
+            )
+            with urllib.request.urlopen(req, timeout=120) as r:
+                resp = _js.loads(r.read().decode())
+            audios = resp.get("audios") or []
+            if not audios:
+                raise ValueError(f"sarvam returned no audio: {str(resp)[:200]}")
+            raw = base64.b64decode(audios[0])
+            with open(out_wav, "wb") as f:
+                f.write(raw)
+            return {"chars": len(text), "request_id": resp.get("request_id")}
+        except urllib.error.HTTPError as e:
+            last = e
+            try:
+                detail = e.read().decode()[:200]
+            except Exception:
+                detail = ""
+            if e.code in (401, 403, 404):
+                continue  # bad/revoked key: never retry same key
+            if e.code == 429:
+                continue  # quota/rate: try next key
+            raise RuntimeError(f"sarvam HTTP {e.code}: {detail}")
+        except Exception as e:
+            last = e
+            continue
+    raise RuntimeError(f"sarvam tts failed on all keys: {last}")
+
 # Gemini prebuilt voices pool; each session speaker gets a random one (stable
 # for the session). Hindi-capable neural voices, free tier.
 GEMINI_VOICE_POOL = ["Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr", "Sulafat", "Callirrhoe"]
@@ -384,7 +507,19 @@ def synthesize(
     pitch_factor = 1.12 if vfull.endswith("+pitch-shift") else 0.88 if vfull.endswith("+pitch-shift2") else 0.0
 
     provider_used = "piper"
-    if _tts_flag_on():
+    sarvam_voice = sarvam_voice_for(speaker_label, target_lang, gender, gindex)
+    try:
+        info = sarvam_tts(text, target_lang, sarvam_voice, wav)
+        provider_used = "sarvam"
+        try:
+            from services.dub_worker import costs as _costs
+
+            _costs.record("sarvam", 0, f"{info.get('chars', 0)} chars")
+        except Exception:
+            pass
+    except Exception:
+        provider_used = "piper"
+    if provider_used == "piper" and _tts_flag_on():
         try:
             gemini_tts(text, gemini_voice_for(speaker_label, gender), wav)
             provider_used = "gemini-tts"
@@ -409,7 +544,9 @@ def synthesize(
             timeout=60,
         )
     try:
-        if pitch_factor and shutil.which("ffmpeg"):
+        # Pitch variants exist only because Piper has few voices. Sarvam/Gemini
+        # already get distinct personas per speaker, so leave those untouched.
+        if provider_used == "piper" and pitch_factor and shutil.which("ffmpeg"):
             shifted = str(Path(out_dir) / f"{base}_shift.wav")
             subprocess.run(
                 ["ffmpeg", "-y", "-i", wav, "-filter:a", f"asetrate=22050*{pitch_factor},aresample=22050", shifted],
