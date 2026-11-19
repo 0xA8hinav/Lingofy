@@ -12,14 +12,26 @@ from pathlib import Path
 CACHE = Path("data/diarize")
 TCACHE = Path("data/transcripts")
 KEYS_FILE = "/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json"
+KEYS_FILE_2 = os.path.expanduser("~/.config/lingofy/gemini_keys_account2.json")
 
 
 def _keys() -> list:
-    try:
-        return json.load(open(KEYS_FILE))["keys"]
-    except Exception:
-        k = os.getenv("GEMINI_API_KEY")
-        return [k] if k else []
+    out: list = []
+    seen = set()
+    for p in (os.getenv("GEMINI_KEYS_FILE", KEYS_FILE), KEYS_FILE_2):
+        try:
+            with open(p) as _kf:
+                _pool = json.load(_kf)["keys"]
+            for k in _pool:
+                if k not in seen:
+                    seen.add(k)
+                    out.append(k)
+        except Exception:
+            continue
+    k = os.getenv("GEMINI_API_KEY")
+    if k and k not in seen:
+        out.append(k)
+    return out
 
 
 _key_cursor = 0

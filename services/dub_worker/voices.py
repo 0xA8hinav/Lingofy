@@ -58,13 +58,13 @@ def gemini_voice_for(speaker_label: str, gender: str = "") -> str:
 
 def gemini_tts(text: str, voice: str, out_wav: str) -> None:
     """Gemini neural TTS -> 24kHz wav. Raises on failure (caller falls back)."""
-    import json as _json
     import wave as _w
 
     from google import genai
 
-    with open("/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json") as _kf:
-        keys = _json.load(_kf)["keys"]
+    from services.dub_worker.gemini_diarize import _keys as _pool
+
+    keys = _pool()
     from google.genai import types as _t
 
     last = None
@@ -146,10 +146,9 @@ def _gemini_client():
     """One shared client (rotated on failure) instead of a new one per chunk."""
     global _GT_CLIENT
     if _GT_CLIENT is None:
-        import json as _js
+        from services.dub_worker.gemini_diarize import _keys as _pool
 
-        with open("/home/abhinav/Documents/github/SVAR/credentials/gemini-api-keys.json") as _kf:
-            keys = _js.load(_kf)["keys"]
+        keys = _pool()
         _GT_CLIENT = [None, keys, [0]]
     return _GT_CLIENT
 
