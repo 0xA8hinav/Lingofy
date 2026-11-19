@@ -177,6 +177,7 @@ def _run_dub(sid: str):
                     _os.replace(mixed, str(_wav))
                 except Exception:
                     pass
+                _marks["synth+mix"] = round(_t.time() - _t0, 2)
             except Exception:
                 pass
             return c["seq"]
@@ -374,6 +375,10 @@ def _dub_chunk(sid: str, seq: int) -> str:
     with lock:
         if seg.exists():
             return _resp()
+        import time as _t
+
+        _t0 = _t.time()
+        _marks = {}
         dur_ms = c["end_ms"] - c["start_ms"]
         # Translated segments (timestamps + translation in ONE cached pass) first;
         # falls back to slice + per-chunk translate.
@@ -397,6 +402,7 @@ def _dub_chunk(sid: str, seq: int) -> str:
             text = r["text"]
             label = label or r.get("speaker_label") or "1"
         gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
+        _marks["map"] = round(_t.time() - _t0, 2)
         if text and _gd_chunk_is_translated:
             tt = text
         else:
@@ -405,6 +411,7 @@ def _dub_chunk(sid: str, seq: int) -> str:
                 tt = tts[seq]
             else:
                 tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
+        _marks["translate"] = round(_t.time() - _t0, 2)
         dubbed = Path("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
         _wav = dubbed / f"{seq:04d}_{label}.wav"
@@ -462,6 +469,8 @@ def _dub_chunk(sid: str, seq: int) -> str:
                     pass
         except Exception:
             pass
+        _marks["mse"] = round(_t.time() - _t0, 2)
+        print(f"[dub-timing] sid={sid} seq={seq} {dur_ms}ms " + " ".join(f"{k}={v}s" for k, v in _marks.items()), flush=True)
         SESSIONS[sid]["chunks_done"] = max(s.get("chunks_done", 0), seq + 1)
         return {
             "url": f"/output/{sid}/{seg.name}",
