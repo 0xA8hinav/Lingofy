@@ -150,14 +150,15 @@ def _run_dub(sid: str):
             paired.append((c, lab, tt))
 
         def _one(item):
-            import os as _os
-
             c, label, tt = item
             try:
+                import os as _os
+
                 gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
                 _wav = dubbed / f"{c['seq']:04d}_{label}.wav"
                 if _wav.exists():
-                    return c["seq"]  # already dubbed via chunk path; skip duplicate synth
+                    _dub_done(sid, c["seq"])  # already dubbed via chunk path; skip duplicate synth
+                    return c["seq"]
                 dur_ms = c["end_ms"] - c["start_ms"]
                 out = synthesize(
                     tt,
@@ -177,6 +178,7 @@ def _run_dub(sid: str):
                     _os.replace(mixed, str(_wav))
                 except Exception:
                     pass
+                _dub_done(sid, c["seq"])
             except Exception:
                 pass
             return c["seq"]
@@ -215,6 +217,15 @@ import threading as _th
 
 _SEGMAPS: dict = {}
 _GENDERS: dict = {}
+_DUB_READY: dict = {}
+
+
+def _dub_done(sid: str, seq: int):
+    key = (sid, seq)
+    ev = _DUB_READY.get(key)
+    if ev is None:
+        ev = _DUB_READY[key] = _th.Event()
+    ev.set()
 
 
 def _session_genders(sid: str) -> dict:
@@ -402,6 +413,12 @@ def _dub_chunk(sid: str, seq: int) -> str:
             label = label or r.get("speaker_label") or "1"
         gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
         _marks["map"] = round(_t.time() - _t0, 2)
+        # If the background full-dub is already working on this chunk, wait for
+        # it (up to ~one chunk of playback) instead of firing a duplicate TTS call.
+        _ev = _DUB_READY.get((sid, seq))
+        if _ev is None:
+            _ev = _DUB_READY[(sid, seq)] = _th.Event()
+        _ev.wait(timeout=20)
         if text and _gd_chunk_is_translated:
             tt = text
         else:

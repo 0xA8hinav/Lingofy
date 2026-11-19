@@ -56,11 +56,31 @@ def gemini_voice_for(speaker_label: str, gender: str = "") -> str:
     return _SESSION_VOICES[key]
 
 
+_TTS_LOCK = None
+_TTS_LAST = [0.0]
+_TTS_MIN_GAP = 6.0  # seconds between TTS calls: stays under quota even with 4 workers
+
+
+def _tts_gate():
+    import threading as _th
+    import time as _time
+
+    global _TTS_LOCK
+    if _TTS_LOCK is None:
+        _TTS_LOCK = _th.Lock()
+    with _TTS_LOCK:
+        wait = _TTS_MIN_GAP - (_time.time() - _TTS_LAST[0])
+        if wait > 0:
+            _time.sleep(wait)
+        _TTS_LAST[0] = _time.time()
+
+
 def gemini_tts(text: str, voice: str, out_wav: str) -> None:
     """Gemini neural TTS -> 24kHz wav. Raises on failure (caller falls back).
 
     Uses ONLY the dedicated TTS key pool (keys 7-10 of the second account),
     never the shared rotation pool — TTS has its own tiny quota.
+    Calls are globally paced so parallel dub workers never trip RPM limits.
     """
     import json as _js
     import os
@@ -74,8 +94,9 @@ def gemini_tts(text: str, voice: str, out_wav: str) -> None:
     from google.genai import types as _t
 
     last = None
-    for key in keys:
+    for i, key in enumerate(keys):
         try:
+            _tts_gate()
             client = genai.Client(api_key=key, http_options={"api_version": "v1beta"})
             resp = client.models.generate_content(
                 model="gemini-2.5-flash-preview-tts",
