@@ -1,9 +1,0 @@
-- generic [ref=f1e1]:
-  - heading "Lingofy dub test" [level=1] [ref=f1e2]
-  - paragraph [ref=f1e3]: Upload mp4/mov/webm (trimmed ≤500MB works best), pick direction, Dub. Player fetches each next chunk only after the previous one starts playing.
-  - button "Choose File" [ref=f1e4]
-  - combobox [ref=f1e5]:
-    - option "EN → HI" [selected]
-    - option "HI → EN"
-  - button "Dub" [active] [ref=f1e6]
-  - generic [ref=f1e9]: "chunks: 4 — dubbing chunk 0…"

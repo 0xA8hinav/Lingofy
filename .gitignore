@@ -30,3 +30,4 @@ worktrees/
 *.tfstate
 *.tfstate.*
 *.tfvars
+.playwright-mcp/
