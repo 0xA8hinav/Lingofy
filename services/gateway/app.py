@@ -177,7 +177,6 @@ def _run_dub(sid: str):
                     _os.replace(mixed, str(_wav))
                 except Exception:
                     pass
-                _marks["synth+mix"] = round(_t.time() - _t0, 2)
             except Exception:
                 pass
             return c["seq"]
