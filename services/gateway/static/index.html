@@ -68,7 +68,6 @@ footer{color:#525b7a;font-size:12px;text-align:center;margin-top:26px}
 <ul class="steps"><li id="s0">Upload</li><li id="s1">Analyze voices</li><li id="s2">Dubbing</li><li id="s3">Ready</li></ul>
 <div class="err" id="err"></div>
 <div class="cost" id="cost"></div>
-<pre id="m">manifest appears here after the dub completes</pre>
 </div>
 </div>
 <footer>Lingofy MVP · local-first dubbing · Piper + Argos + Gemini diarization · $0 default path</footer>
@@ -170,7 +169,6 @@ async function pollMeta(){
     clearInterval(timer);setPill('ready','done');step(3);
     const m=await (await fetch('/v1/sessions/'+sid+'/manifest')).json();
     origUrl=m.orig_url;segments=m.segments||[];drawTimeline();
-    $('m').textContent=JSON.stringify({speakers:m.speakers,chunks:total,voices:m.speakers.map(s=>'voice '+s)},null,1);
     $('st').textContent='Done — full video ready. Seeking works across the whole timeline.';
   }
 }
