@@ -119,6 +119,9 @@ def sarvam_tts(text: str, lang: str, voice: str, out_wav: str, pace: float = 1.0
         "pace": min(2.0, max(0.5, pace)),
         "speech_sample_rate": 22050,
         "output_audio_codec": "wav",
+        # Low temperature: same persona must sound like the SAME person
+        # across chunks. Default 0.6 wanders in energy/intonation per call.
+        "temperature": 0.2,
     }).encode()
     last = None
     for key in keys:
