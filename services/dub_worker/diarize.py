@@ -19,17 +19,23 @@ def _f0_median(vals, sr=16000) -> float:
     x = [v - mean for v in vals[::4]]  # 4kHz decimation for speed
     sr_d = sr // 4
     lo, hi = max(1, sr_d // 400), min(len(x) // 2, sr_d // 50)
-    best_lag, best_v = 0, 0.0
+    best_v = 0.0
+    curve = []
     e0 = sum(v * v for v in x) or 1.0
     step = max(1, (hi - lo) // 60)
     for lag in range(lo, hi, step):
         s = sum(a * b for a, b in zip(x, x[lag : lag + len(x) - lag]))
         v = s / e0
-        if v > best_v:
-            best_v, best_lag = v, lag
+        curve.append((lag, v))
+        best_v = max(best_v, v)
     if best_v < 0.25:
         return 0.0
-    return sr_d / best_lag
+    # first strong peak (fundamental), not the global max (often a subharmonic
+    # an octave below, e.g. 66Hz on a ~200Hz female voice)
+    for lag, v in curve:
+        if v > best_v * 0.6:
+            return sr_d / lag
+    return 0.0
 
 
 def _embed(wav_path: str) -> list[float]:

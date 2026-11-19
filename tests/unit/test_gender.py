@@ -3,7 +3,7 @@ from services.dub_worker.voices import voice_for
 
 
 def test_gender_splits_male_female():
-    assert gender_for_wav("/tmp/opencode/gt/2_14.wav") == "female"  # priyamvada 250Hz
+    assert gender_for_wav("tests/fixtures/voices/female_hi.wav") == "female"
     assert classify_gender(100.0) == "male"
     assert classify_gender(250.0) == "female"
     assert classify_gender(0.0) == "unknown"
@@ -12,8 +12,8 @@ def test_gender_splits_male_female():
 def test_gender_nn_both_voices():
     from services.dub_worker.diarize import classify_gender_nn
 
-    assert classify_gender_nn("/tmp/opencode/gt/2_14.wav") == "female"
-    assert classify_gender_nn("/tmp/opencode/gt/2_634.wav") == "male"
+    assert classify_gender_nn("tests/fixtures/voices/female_hi.wav") == "female"
+    assert classify_gender_nn("tests/fixtures/voices/male_en.wav") == "male"
 
 
 def test_gender_matched_voices():
