@@ -363,7 +363,11 @@ def _dub_chunk(sid: str, seq: int) -> str:
             text = r["text"]
             label = label or r.get("speaker_label") or "1"
         gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
-        tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
+        tts = s.get("batch_tts") or []
+        if seq < len(tts) and tts[seq]:
+            tt = tts[seq]
+        else:
+            tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
         dubbed = Path("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
         _wav = dubbed / f"{seq:04d}_{label}.wav"
@@ -519,9 +523,30 @@ async def upload_video(
 
 
 def _warm_maps(sid: str):
-    # one Gemini call warms both speaker map and transcript cache
+    # one Gemini call warms speaker map + transcript cache; a second call
+    # pre-translates EVERYTHING so per-chunk dubbing never waits on MT.
     try:
         _session_segments(sid)
+    except Exception:
+        pass
+    try:
+        from services.dub_worker import gemini_diarize as _gd
+        from services.dub_worker.voices import translate_batch
+
+        s = SESSIONS.get(sid)
+        if not s:
+            return
+        full_wav = _session_full_wav(sid)
+        texts, labels = [], []
+        for c in s["chunks"]:
+            t, lab = _gd.chunk_text(full_wav, c["start_ms"] / 1000, c["end_ms"] / 1000)
+            texts.append(t or " ")
+            labels.append(lab or "1")
+        SESSIONS[sid]["batch_labels"] = labels
+        try:
+            SESSIONS[sid]["batch_tts"] = translate_batch(texts, s["source_lang"], s["target_lang"])
+        except Exception:
+            pass
     except Exception:
         pass
 
