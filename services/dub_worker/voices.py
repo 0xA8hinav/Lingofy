@@ -57,20 +57,26 @@ def gemini_voice_for(speaker_label: str, gender: str = "") -> str:
 
 
 def gemini_tts(text: str, voice: str, out_wav: str) -> None:
-    """Gemini neural TTS -> 24kHz wav. Raises on failure (caller falls back)."""
+    """Gemini neural TTS -> 24kHz wav. Raises on failure (caller falls back).
+
+    Uses ONLY the dedicated TTS key pool (keys 7-10 of the second account),
+    never the shared rotation pool — TTS has its own tiny quota.
+    """
+    import json as _js
+    import os
     import wave as _w
 
     from google import genai
 
-    from services.dub_worker.gemini_diarize import _keys as _pool
+    with open(os.path.expanduser("~/.config/lingofy/gemini_keys_tts.json")) as _kf:
+        keys = _js.load(_kf)["keys"]
 
-    keys = _pool()
     from google.genai import types as _t
 
     last = None
     for key in keys:
         try:
-            client = genai.Client(api_key=key)
+            client = genai.Client(api_key=key, http_options={"api_version": "v1beta"})
             resp = client.models.generate_content(
                 model="gemini-2.5-flash-preview-tts",
                 contents=text,
