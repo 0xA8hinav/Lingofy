@@ -134,7 +134,7 @@ async function fetchChunk(n){
   if(j.done||!j.mse_url)return;
   const buf=await (await fetch(j.mse_url)).arrayBuffer();
   pending.push({buf:buf,off:j.start});
-  if(j.speaker){$('spk').textContent='Speaker '+j.speaker+(j.gender&&j.gender!=='unknown'?' · '+j.gender:'');$('dot').className='dot live';}
+  if(!segments.length&&j.speaker){$('spk').textContent='Speaker '+j.speaker+(j.gender&&j.gender!=='unknown'?' · '+j.gender:'');$('dot').className='dot live';}
   $('fill').style.width=Math.round(100*n/total)+'%';
   $('st').textContent='Playing chunk '+(n+1)+'/'+total;
   doAppend();
@@ -144,6 +144,7 @@ async function pollMeta(){
   catch(e){return;}
   fetch('/v1/cost').then(r=>r.json()).then(c=>{$('cost').textContent='spent so far: ₹'+c.chirp_inr+' ('+c.chirp_calls+' Chirp calls)';}).catch(()=>{});
   if(st.error){showErr(st.error);clearInterval(timer);return;}
+  if(!segments.length){fetch('/v1/sessions/'+sid+'/manifest').then(r=>r.json()).then(m=>{if(m.segments&&m.segments.length){segments=m.segments;drawTimeline();origUrl=origUrl||m.orig_url;}}).catch(()=>{});}
   if(st.video_url&&st.chunks_done>=st.chunks_total&&st.chunks_total>0){
     clearInterval(timer);setPill('ready','done');step(3);
     const m=await (await fetch('/v1/sessions/'+sid+'/manifest')).json();

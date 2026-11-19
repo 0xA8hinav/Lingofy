@@ -210,36 +210,57 @@ _GENDERS: dict = {}
 
 
 def _session_genders(sid: str) -> dict:
-    """Per-speaker gender by pitch majority vote over their chunks. Cached."""
+    """One NN gender check per speaker on their longest turn. Cached.
+
+    File-level segments come first (diarize once per upload); each distinct
+    speaker gets a single voice sample classified, then every chunk of theirs
+    reuses the result. Pitch is only a fallback when the model abstains.
+    """
     if sid in _GENDERS:
         return _GENDERS[sid]
     from services.dub_worker import diarize as _dz
 
-    s = SESSIONS[sid]
+    s = SESSIONS.get(sid, {})
     try:
         segs = _session_segments(sid)
     except Exception:
         segs = []
-    labels = sorted({x["speaker"] for x in segs}) if segs else ["1", "2", "3"]
+    labels = sorted({str(x["speaker"]) for x in segs}) if segs else []
     out: dict = {}
     counts: dict = {}
+    try:
+        full = _session_full_wav(sid)
+        import wave as _w
+
+        with _w.open(full, "rb") as _f:
+            _sr, _n = _f.getframerate(), _f.getnframes()
+            _raw = _f.readframes(_n)
+        import struct as _st
+
+        _vals = list(_st.unpack("<" + "h" * (len(_raw) // 2), _raw)) if _raw else [0]
+    except Exception:
+        _vals, _sr = [0], 16000
     for lab in labels:
-        votes: dict = {}
-        for c in s["chunks"]:
-            mid = (c["start_ms"] + c["end_ms"]) / 2000
-            in_seg = any(x["speaker"] == lab and x["start"] <= mid <= x["end"] for x in segs) if segs else True
-            if not in_seg:
-                continue
-            try:
-                g = _dz.classify_gender_nn(c["wav_path"])  # 1 sample check
-                if g == "unknown":
-                    g = _dz.gender_for_wav(c["wav_path"])  # pitch fallback
-            except Exception:
-                g = "unknown"
-            if g != "unknown":
-                votes[g] = votes.get(g, 0) + 1
-                break  # one confident sample per speaker is enough
-        g = max(votes, key=votes.get) if votes else "unknown"
+        lab_segs = [x for x in segs if str(x["speaker"]) == lab] or [{"start": 0, "end": 8}]
+        longest = max(lab_segs, key=lambda x: x["end"] - x["start"])
+        mid = (longest["start"] + longest["end"]) / 2
+        a = max(0, int((mid - 2) * _sr))
+        b = min(len(_vals), int((mid + 2) * _sr))
+        g = "unknown"
+        try:
+            import tempfile
+
+            _p = tempfile.mktemp(suffix=".wav")
+            with _w.open(_p, "wb") as _o:
+                _o.setnchannels(1)
+                _o.setsampwidth(2)
+                _o.setframerate(_sr)
+                _o.writeframes(_st.pack("<" + "h" * max(1, b - a), *(_vals[a:b] or [0])))
+            g = _dz.classify_gender_nn(_p)
+            if g == "unknown":
+                g = _dz.gender_for_wav(_p)
+        except Exception:
+            pass
         out[lab] = {"gender": g, "gindex": counts.get(g, 0)}
         if g != "unknown":
             counts[g] = counts.get(g, 0) + 1
