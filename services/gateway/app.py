@@ -71,6 +71,28 @@ except Exception:
     pass
 
 
+def _warm_gender_nn():
+    """Background warmup: wav2vec2-large gender model costs ~2 min cold on CPU.
+
+    Without this, the first dub of a server's life pays that inside the dub
+    path (the 'Analyzing voices' stall). Daemon thread: never blocks boot.
+    """
+    import threading as _th
+
+    def _w():
+        try:
+            from services.dub_worker import diarize as _dz
+
+            _dz.classify_gender_nn(__file__)  # model load; inference error ignored
+        except Exception:
+            pass
+
+    _th.Thread(target=_w, daemon=True).start()
+
+
+_warm_gender_nn()
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -106,11 +128,17 @@ def _run_dub(sid: str):
     if not s:
         return
     t0 = time.time()
+
+    def _mark(tag: str):
+        print(f"[dub {sid}] {tag} +{time.time() - t0:.1f}s", flush=True)
+
     try:
         chunks = s["chunks"]
         SESSIONS[sid]["chunks_total"] = len(chunks)
         full_wav = _session_full_wav(sid)
+        _mark("full_wav ready")
         segs = _session_segments(sid)  # one gemini call; also caches transcript words
+        _mark(f"segments ready ({len(segs)} segs)")
         dubbed = _P("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
 
@@ -136,10 +164,12 @@ def _run_dub(sid: str):
         # phase 2: ONE batched translation call for all chunks (was: 1 call/chunk)
         from services.dub_worker.voices import translate as _translate_one
 
+        _mark(f"phase1 done ({len(jobs)} jobs)")
         try:
             tts = translate_batch([t for _, t, _ in jobs], s["source_lang"], s["target_lang"])
         except Exception:
             tts = [""] * len(jobs)
+        _mark("translate_batch done")
         paired = []
         for (c, t, lab), tt in zip(jobs, tts):
             if not tt:
@@ -183,11 +213,14 @@ def _run_dub(sid: str):
                 pass
             return c["seq"]
 
+        _mark(f"synth start ({len(paired)} paired)")
+
         done = 0
         with ThreadPoolExecutor(max_workers=4) as ex:
             for _ in ex.map(_one, paired):
                 done += 1
                 SESSIONS[sid]["chunks_done"] = done
+        _mark("synth done")
         got = len(sorted(dubbed.glob("*.wav")))
         if got < len(chunks) // 2:
             raise RuntimeError(f"only {got}/{len(chunks)} chunks dubbed — transcript unavailable, retry later")
@@ -200,6 +233,7 @@ def _run_dub(sid: str):
             src_video=s["src"],
         )
         SESSIONS[sid]["video_url"] = f"/output/{sid}/dubbed_{s['target_lang']}.mp4"
+        _mark("assemble done")
         try:
             import shutil as _sh
 
