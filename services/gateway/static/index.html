@@ -110,10 +110,13 @@ async function go(){
   timer=setInterval(pollMeta,2000);
 }
 function curSeg(t){return segments.find(x=>t>=x.start&&t<x.end);}
-async function startMSE(){
+async function startMSE(fromT){
+  // fromT>0 when re-attaching after the original-audio toggle: the old
+  // MediaSource is closed permanently on detach, so build a fresh one.
   try{
+    if(msUrl)try{URL.revokeObjectURL(msUrl);}catch(_){}
     ms=new MediaSource();const v=$('v');msUrl=URL.createObjectURL(ms);v.src=msUrl;
-    await new Promise(res=>{ms.addEventListener('sourceopen',res,{once:true});});
+    await new Promise((res,rej)=>{ms.addEventListener('sourceopen',res,{once:true});setTimeout(()=>rej(new Error('sourceopen timeout')),15000);});
     ms.duration=totalS;
     const j0=await (await fetch('/v1/sessions/'+sid+'/chunk/0')).json();
     if(j0.done||!j0.mse_url)throw new Error('empty session');
@@ -123,6 +126,8 @@ async function startMSE(){
     sb.addEventListener('updateend',pump);
     const ibuf=await (await fetch(j0.mse_init)).arrayBuffer();
     sb.appendBuffer(ibuf); // init segment, no timestamp offset needed
+    nextAppend=0;pending=[];inflight=new Set();
+    if(fromT>0){try{v.currentTime=Math.min(fromT,totalS-1);}catch(_){}}
     step(2);setPill('dubbing','working');
     v.play().catch(()=>{});
     pump(); // starts pipelined fetch of chunks 0..2
@@ -186,9 +191,9 @@ $('dubbed').addEventListener('change',e=>{
   const v=$('v');if(!v.src)return;
   const t=v.currentTime,wasPaused=v.paused;
   try{
-    if(e.target.checked&&msUrl){v.src=msUrl;}
+    if(e.target.checked&&sid){startMSE(t);if(wasPaused)setTimeout(()=>{try{v.pause()}catch(_){}},800);}
     else if(origUrl){v.src=origUrl+'?t='+Date.now();}
-    v.addEventListener('loadedmetadata',()=>{try{v.currentTime=Math.min(t,v.duration||t);}catch(_){} if(!wasPaused)v.play().catch(()=>{});},{once:true});
+    if(!e.target.checked)v.addEventListener('loadedmetadata',()=>{try{v.currentTime=Math.min(t,v.duration||t);}catch(_){} if(!wasPaused)v.play().catch(()=>{});},{once:true});
   }catch(err){showErr('Switch failed: '+err.message);}
 });
 </script>
