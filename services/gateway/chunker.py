@@ -21,8 +21,13 @@ def _split_wav(wav_path: str, out_dir: str, session_id: str) -> list[dict]:
         frames_per_chunk = int(framerate * CHUNK_MS / 1000)
         seq = 0
         pos = 0
+        # Absorb trailing slivers (<1s) into the previous chunk: a near-empty
+        # final fragment stalls MSE appends (seen frozen at the last boundary).
+        min_frames = int(framerate * 1.0)
         while pos < n_frames:
             take = min(frames_per_chunk, n_frames - pos)
+            if take < n_frames - pos and (n_frames - pos - take) < min_frames:
+                take = n_frames - pos
             w.setpos(pos)
             data = w.readframes(take)
             chunk_id = f"{session_id}_{seq:04d}"
