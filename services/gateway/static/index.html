@@ -84,20 +84,29 @@ $('drop').ondragover=e=>{e.preventDefault();$('drop').classList.add('over');};
 $('drop').ondragleave=()=>$('drop').classList.remove('over');
 $('drop').ondrop=e=>{e.preventDefault();$('drop').classList.remove('over');if(e.dataTransfer.files.length){$('f').files=e.dataTransfer.files;filePicked();}};
 $('f').onchange=filePicked;
-function filePicked(){const f=$('f').files[0];if(!f)return;$('fname').innerHTML='<b>'+f.name+'</b> · '+(f.size/1048576).toFixed(1)+' MB';$('go').disabled=false;step(0);}
+function filePicked(){const f=$('f').files[0];if(!f)return;$('fname').innerHTML='<b>'+f.name+'</b> · '+(f.size/1048576).toFixed(1)+' MB';step(0);uploadOriginal();}
 document.querySelectorAll('#dirseg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#dirseg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');wantLang=b.dataset.d.split('-')[1];});
 $('go').onclick=go;
-async function go(){
+async function uploadOriginal(){
+  // upload immediately on file select so the original plays without Dub
   const dir=document.querySelector('#dirseg button.on').dataset.d.split('-');
-  $('go').disabled=true;$('err').style.display='none';setPill('working','working');step(1);
   const s=await (await fetch('/v1/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_lang:dir[0],target_lang:dir[1]})})).json();
   sid=s.session_id;
   const fd=new FormData();fd.append('file',$('f').files[0]);
   let u;try{u=await (await fetch('/v1/sessions/'+sid+'/video',{method:'POST',body:fd})).json();}
-  catch(e){showErr('Upload failed: '+e);$('go').disabled=false;return;}
-  if(u.error||!u.chunks_total){showErr('Upload rejected: '+(u.error||'unknown file'));$('go').disabled=false;return;}
-  total=u.chunks_total;totalS=u.total_s||total*8;nextN=0;wantN=0;pending=[];appending=false;segments=[];
+  catch(e){showErr('Upload failed: '+e);return;}
+  if(u.error||!u.chunks_total){showErr('Upload rejected: '+(u.error||'unknown file'));return;}
+  total=u.chunks_total;totalS=u.total_s||total*8;
+  if(u.orig_url){const v0=document.getElementById('v');v0.src=u.orig_url;origUrl=u.orig_url;}
+  $('st').textContent='original ready — press Dub for the Hindi version, or just press play';
+  $('go').disabled=false;setPill('ready','');
+}
+async function go(){
+  if(!sid){showErr('Pick a file first — it uploads automatically.');return;}
+  nextN=0;wantN=0;pending=[];appending=false;segments=[];ms=null;sb=null;
+  $('go').disabled=true;$('err').style.display='none';setPill('working','working');step(1);
   $('st').textContent='Analyzing voices… (one-time per video, cached after)';
+  fetch('/v1/sessions/'+sid+'/dub',{method:'POST'});
   startMSE();
   timer=setInterval(pollMeta,2000);
 }

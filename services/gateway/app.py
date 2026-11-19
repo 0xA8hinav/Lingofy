@@ -548,7 +548,7 @@ async def upload_video(
     # warm the file-level transcript+speaker map now, so chunk 0 dubs in seconds
     bg.add_task(_session_full_wav, sid)
     bg.add_task(_warm_maps, sid)
-    return {"chunks_total": len(chunks), "total_s": total_s}
+    return {"chunks_total": len(chunks), "total_s": total_s, "orig_url": SESSIONS[sid].get("orig_url")}
 
 
 def _warm_maps(sid: str):
