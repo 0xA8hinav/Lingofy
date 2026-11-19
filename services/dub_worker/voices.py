@@ -31,10 +31,6 @@ GENDER_VOICES = {
     },
 }
 
-# Gendered Gemini pools (stable pools; assignment still random within gender).
-GEMINI_MALE = ["Puck", "Charon", "Fenrir", "Orus", "Zephyr"]
-GEMINI_FEMALE = ["Kore", "Aoede", "Leda", "Callirrhoe", "Sulafat"]
-
 # Sarvam Bulbul v4-flash Hindi + English personas, gender-matched.
 # Deterministic per (speaker, gender, index) so voices stay stable across chunks.
 SARVAM_VOICES = {
@@ -108,9 +104,8 @@ def sarvam_tts(text: str, lang: str, voice: str, out_wav: str, pace: float = 1.0
     """
     import base64
     import json as _js
-    import urllib.request
     import urllib.error
-    import wave as _w
+    import urllib.request
 
     keys = sarvam_keys()
     if not keys:
@@ -157,94 +152,6 @@ def sarvam_tts(text: str, lang: str, voice: str, out_wav: str, pace: float = 1.0
             last = e
             continue
     raise RuntimeError(f"sarvam tts failed on all keys: {last}")
-
-# Gemini prebuilt voices pool; each session speaker gets a random one (stable
-# for the session). Hindi-capable neural voices, free tier.
-GEMINI_VOICE_POOL = ["Kore", "Puck", "Charon", "Fenrir", "Aoede", "Leda", "Orus", "Zephyr", "Sulafat", "Callirrhoe"]
-_SESSION_VOICES: dict = {}
-
-
-def gemini_voice_for(speaker_label: str, gender: str = "") -> str:
-    import random
-
-    key = (speaker_label, gender or "any")
-    if key not in _SESSION_VOICES:
-        if gender == "male":
-            pool = [v for v in GEMINI_MALE if v not in _SESSION_VOICES.values()] or GEMINI_MALE
-        elif gender == "female":
-            pool = [v for v in GEMINI_FEMALE if v not in _SESSION_VOICES.values()] or GEMINI_FEMALE
-        else:
-            pool = [v for v in GEMINI_VOICE_POOL if v not in _SESSION_VOICES.values()] or GEMINI_VOICE_POOL
-        _SESSION_VOICES[key] = random.choice(pool)
-    return _SESSION_VOICES[key]
-
-
-_TTS_LOCK = None
-_TTS_LAST = [0.0]
-_TTS_MIN_GAP = 6.0  # seconds between TTS calls: stays under quota even with 4 workers
-
-
-def _tts_gate():
-    import threading as _th
-    import time as _time
-
-    global _TTS_LOCK
-    if _TTS_LOCK is None:
-        _TTS_LOCK = _th.Lock()
-    with _TTS_LOCK:
-        wait = _TTS_MIN_GAP - (_time.time() - _TTS_LAST[0])
-        if wait > 0:
-            _time.sleep(wait)
-        _TTS_LAST[0] = _time.time()
-
-
-def gemini_tts(text: str, voice: str, out_wav: str) -> None:
-    """Gemini neural TTS -> 24kHz wav. Raises on failure (caller falls back).
-
-    Uses ONLY the dedicated TTS key pool (keys 7-10 of the second account),
-    never the shared rotation pool — TTS has its own tiny quota.
-    Calls are globally paced so parallel dub workers never trip RPM limits.
-    """
-    import json as _js
-    import os
-    import wave as _w
-
-    with open(os.path.expanduser("~/.config/lingofy/gemini_keys_tts.json")) as _kf:
-        keys = _js.load(_kf)["keys"]
-
-    from google.genai import types as _t
-
-    from services.dub_worker.gemini_diarize import genai_client as _genai_client
-
-    last = None
-    for i, key in enumerate(keys):
-        try:
-            _tts_gate()
-            client = _genai_client(key)
-            resp = client.models.generate_content(
-                model="gemini-2.5-flash-preview-tts",
-                contents=text,
-                config=_t.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=_t.SpeechConfig(
-                        voice_config=_t.VoiceConfig(prebuilt_voice_config=_t.PrebuiltVoiceConfig(voice_name=voice))
-                    ),
-                ),
-            )
-            for p in resp.candidates[0].content.parts:
-                inline = getattr(p, "inline_data", None)
-                if inline and inline.data:
-                    with _w.open(out_wav, "wb") as _o:
-                        _o.setnchannels(1)
-                        _o.setsampwidth(2)
-                        _o.setframerate(24000)
-                        _o.writeframes(inline.data)
-                    return
-            raise ValueError("no audio in gemini tts response")
-        except Exception as e:
-            last = e
-            continue
-    raise RuntimeError(f"gemini tts failed: {last}")
 
 
 # Natural speaking rate per language at length-scale 1.0 (measured, chars/sec).
@@ -337,22 +244,6 @@ def _translate_one(client, text: str, source_lang: str, target_lang: str) -> str
     if not out:
         raise ValueError("empty translation")
     return out
-
-
-def _tts_flag_on() -> bool:
-    """Gemini TTS enabled via env OR flag file.
-
-    The flag file exists because launcher shells may not propagate inline
-    env vars to the server process — a file is unambiguous.
-    """
-    import os
-
-    if os.environ.get("LINGOFY_USE_GEMINI_TTS"):
-        return True
-    try:
-        return os.path.exists(os.path.expanduser("~/.config/lingofy/enable_gemini_tts"))
-    except Exception:
-        return False
 
 
 def _translate_gemini(text: str, source_lang: str, target_lang: str) -> str:
@@ -519,20 +410,6 @@ def synthesize(
             pass
     except Exception:
         provider_used = "piper"
-    if provider_used == "piper" and _tts_flag_on():
-        try:
-            gemini_tts(text, gemini_voice_for(speaker_label, gender), wav)
-            provider_used = "gemini-tts"
-            if shutil.which("ffmpeg"):
-                uni = str(Path(out_dir) / f"{base}_22k.wav")
-                subprocess.run(
-                    ["ffmpeg", "-y", "-i", wav, "-ar", "22050", "-ac", "1", uni],
-                    check=True,
-                    capture_output=True,
-                )
-                Path(uni).replace(wav)
-        except Exception:
-            provider_used = "piper"
     if provider_used == "piper" and not Path(wav).exists():
         if not Path(model).exists():
             raise FileNotFoundError(model)
@@ -544,8 +421,8 @@ def synthesize(
             timeout=60,
         )
     try:
-        # Pitch variants exist only because Piper has few voices. Sarvam/Gemini
-        # already get distinct personas per speaker, so leave those untouched.
+        # Pitch variants exist only because Piper has few voices. Sarvam
+        # already gets distinct personas per speaker, so leave those untouched.
         if provider_used == "piper" and pitch_factor and shutil.which("ffmpeg"):
             shifted = str(Path(out_dir) / f"{base}_shift.wav")
             subprocess.run(

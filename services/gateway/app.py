@@ -25,9 +25,9 @@ def metrics():
         from services.dub_worker import costs as _c
 
         t = _c.totals()
-        chirp_calls, chirp_min = t.get("chirp_calls", 0), t.get("chirp_audio_min", 0)
+        sarvam_calls, sarvam_inr = t.get("sarvam_calls", 0), t.get("sarvam_inr_est", 0)
     except Exception:
-        chirp_calls, chirp_min = 0, 0
+        sarvam_calls, sarvam_inr = 0, 0
     n_sess = len(SESSIONS)
     done = sum(s.get("chunks_done", 0) for s in SESSIONS.values())
     total = sum(s.get("chunks_total", 0) for s in SESSIONS.values())
@@ -41,12 +41,12 @@ def metrics():
         "# HELP lingofy_chunks_total_total Chunk backlog + done",
         "# TYPE lingofy_chunks_total_total counter",
         f"lingofy_chunks_total_total {total}",
-        "# HELP lingofy_chirp_calls_total Paid Chirp calls (should stay 0 on free path)",
-        "# TYPE lingofy_chirp_calls_total counter",
-        f"lingofy_chirp_calls_total {chirp_calls}",
-        "# HELP lingofy_chirp_minutes_total Paid Chirp audio minutes",
-        "# TYPE lingofy_chirp_minutes_total counter",
-        f"lingofy_chirp_minutes_total {chirp_min}",
+        "# HELP lingofy_sarvam_calls_total Sarvam TTS calls",
+        "# TYPE lingofy_sarvam_calls_total counter",
+        f"lingofy_sarvam_calls_total {sarvam_calls}",
+        "# HELP lingofy_sarvam_inr_est_total Estimated Sarvam spend (INR)",
+        "# TYPE lingofy_sarvam_inr_est_total counter",
+        f"lingofy_sarvam_inr_est_total {sarvam_inr}",
     ]
     from fastapi.responses import PlainTextResponse
 
@@ -702,10 +702,9 @@ def manifest(sid: str):
 @app.get("/v1/cost")
 def cost():
     from services.dub_worker import costs as _costs
-    from services.dub_worker.voices import _tts_flag_on
 
     out = _costs.totals()
-    out["tts_engine"] = "gemini-tts" if _tts_flag_on() else "piper"
+    out["tts_engine"] = "sarvam"
     return out
 
 

@@ -11,11 +11,11 @@ groups:
         labels: { severity: page }
         annotations:
           summary: "Dub backlog not draining for 5m"
-      # Cost guard (stands in for DLQNonEmpty until the SQS phase lands):
-      # the free-by-default setup should never touch paid STT.
+      # Cost guard: Sarvam TTS spend should stay small per demo.
+      # the piper fallback keeps playback working if keys throttle.
       - alert: PaidPathUsed
-        expr: lingofy_chirp_calls_total > 0
+        expr: lingofy_sarvam_inr_est_total > 50
         for: 10m
         labels: { severity: ticket }
         annotations:
-          summary: "Paid STT path used — verify LINGOFY_USE_CHIRP intent"
+          summary: "Sarvam TTS spend over ₹50 — verify usage intent"

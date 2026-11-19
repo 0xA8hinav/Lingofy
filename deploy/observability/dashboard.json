@@ -14,15 +14,15 @@
       "targets": [{ "expr": "lingofy_sessions_total" }]
     },
     {
-      "title": "Paid STT usage (must stay ~0 on free path)",
+      "title": "Sarvam TTS usage + est. spend",
       "targets": [
-        { "expr": "lingofy_chirp_calls_total" },
-        { "expr": "lingofy_chirp_minutes_total" }
+        { "expr": "lingofy_sarvam_calls_total" },
+        { "expr": "lingofy_sarvam_inr_est_total" }
       ]
     },
     {
-      "title": "Cost guard: Chirp minutes vs $5 cap (~330 min @ $0.016)",
-      "targets": [{ "expr": "lingofy_chirp_minutes_total > 300" }]
+      "title": "Cost guard: Sarvam est. spend vs ₹50 cap",
+      "targets": [{ "expr": "lingofy_sarvam_inr_est_total > 50" }]
     }
   ]
 }

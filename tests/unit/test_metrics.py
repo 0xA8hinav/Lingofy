@@ -12,7 +12,7 @@ def test_metrics_endpoint_prometheus_format():
     for name in (
         "lingofy_sessions_total",
         "lingofy_chunks_done_total",
-        "lingofy_chirp_calls_total",
-        "lingofy_chirp_minutes_total",
+        "lingofy_sarvam_calls_total",
+        "lingofy_sarvam_inr_est_total",
     ):
         assert name in body

@@ -14,4 +14,4 @@ def test_piper_cost_zero():
 
 def test_mixed_lang_chunk_never_empty(tmp_path):
     out = synthesize(translate("Hello नमस्ते", "en", "hi")["target_text"], "hi", "1", str(tmp_path))
-    assert out["provider"] in ("piper", "gemini-tts") and Path(out["wav_path"]).stat().st_size > 0
+    assert out["provider"] in ("piper", "sarvam") and Path(out["wav_path"]).stat().st_size > 0
