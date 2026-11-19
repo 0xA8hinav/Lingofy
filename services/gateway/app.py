@@ -182,15 +182,13 @@ def _run_dub(sid: str):
         def _one(item):
             c, label, tt = item
             try:
-                import os as _os
-
                 gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
                 _wav = dubbed / f"{c['seq']:04d}_{label}.wav"
                 if _wav.exists():
                     _dub_done(sid, c["seq"])  # already dubbed via chunk path; skip duplicate synth
                     return c["seq"]
                 dur_ms = c["end_ms"] - c["start_ms"]
-                out = synthesize(
+                synthesize(
                     tt,
                     s["target_lang"],
                     label,
@@ -200,14 +198,7 @@ def _run_dub(sid: str):
                     gender=gm["gender"],
                     gindex=gm["gindex"],
                 )
-                try:  # voice where source speaks, original audio in the gaps
-                    from services.dub_worker.bed import mix_voice_over_gaps
-
-                    mixed = str(_wav.with_suffix(".mix.wav"))
-                    mix_voice_over_gaps(out["wav_path"], c["wav_path"], mixed)
-                    _os.replace(mixed, str(_wav))
-                except Exception:
-                    pass
+                # Dub-only: pure TTS voice, original audio muted (bed mix removed).
                 _dub_done(sid, c["seq"])
             except Exception:
                 pass
@@ -478,8 +469,6 @@ def _dub_chunk(sid: str, seq: int) -> str:
         dubbed.mkdir(parents=True, exist_ok=True)
         _wav = dubbed / f"{seq:04d}_{label}.wav"
         if not _wav.exists():
-            import os as _os
-
             out = synthesize(
                 tt,
                 s["target_lang"],
@@ -490,14 +479,7 @@ def _dub_chunk(sid: str, seq: int) -> str:
                 gender=gm["gender"],
                 gindex=gm["gindex"],
             )
-            try:  # voice where source speaks, original audio in the gaps
-                from services.dub_worker.bed import mix_voice_over_gaps
-
-                mixed = str(_wav.with_suffix(".mix.wav"))
-                mix_voice_over_gaps(out["wav_path"], c["wav_path"], mixed)
-                _os.replace(mixed, str(_wav))
-            except Exception:
-                pass
+            # Dub-only: pure TTS voice, original audio muted (bed mix removed).
             out = {
                 "wav_path": str(_wav),
                 "mp3_path": str(_wav.with_suffix(".mp3")),
