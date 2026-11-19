@@ -367,15 +367,21 @@ def _dub_chunk(sid: str, seq: int) -> str:
         if seg.exists():
             return _resp()
         dur_ms = c["end_ms"] - c["start_ms"]
-        # Gemini-first, zero paid APIs: file transcript sliced per chunk + file speaker map
+        # Translated segments (timestamps + translation in ONE cached pass) first;
+        # falls back to slice + per-chunk translate.
+        _gd_chunk_is_translated = False
         try:
             from services.dub_worker import gemini_diarize as _gd
 
-            _segs = _session_segments(sid)
             _full = _session_full_wav(sid)
-            text, label = _gd.chunk_text(_full, c["start_ms"] / 1000, c["end_ms"] / 1000)
-            if not label:
-                label = _gd.speaker_at(_segs, c["start_ms"] / 1000)
+            text, label = _gd.chunk_translated(_full, s["target_lang"], c["start_ms"] / 1000, c["end_ms"] / 1000)
+            if text:
+                _gd_chunk_is_translated = True
+            if not text:
+                _segs = _session_segments(sid)
+                text, label = _gd.chunk_text(_full, c["start_ms"] / 1000, c["end_ms"] / 1000)
+                if not label:
+                    label = _gd.speaker_at(_segs, c["start_ms"] / 1000)
         except Exception:
             text, label = "", ""
         if not text:
@@ -383,11 +389,14 @@ def _dub_chunk(sid: str, seq: int) -> str:
             text = r["text"]
             label = label or r.get("speaker_label") or "1"
         gm = _session_genders(sid).get(label, {"gender": "", "gindex": 0})
-        tts = s.get("batch_tts") or []
-        if seq < len(tts) and tts[seq]:
-            tt = tts[seq]
+        if text and _gd_chunk_is_translated:
+            tt = text
         else:
-            tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
+            tts = s.get("batch_tts") or []
+            if seq < len(tts) and tts[seq]:
+                tt = tts[seq]
+            else:
+                tt = translate(text, s["source_lang"], s["target_lang"])["target_text"]
         dubbed = Path("data") / "dubbed" / sid
         dubbed.mkdir(parents=True, exist_ok=True)
         _wav = dubbed / f"{seq:04d}_{label}.wav"
@@ -543,20 +552,23 @@ async def upload_video(
 
 
 def _warm_maps(sid: str):
-    # one Gemini call warms speaker map + transcript cache; a second call
-    # pre-translates EVERYTHING so per-chunk dubbing never waits on MT.
+    # one Gemini call warms speaker map + transcript cache; sentence-level
+    # translation warms next so per-chunk dubbing never waits on MT.
     try:
         _session_segments(sid)
     except Exception:
         pass
     try:
         from services.dub_worker import gemini_diarize as _gd
-        from services.dub_worker.voices import translate_batch
 
         s = SESSIONS.get(sid)
         if not s:
             return
         full_wav = _session_full_wav(sid)
+        try:
+            _gd.translate_segments(full_wav, s["source_lang"], s["target_lang"])
+        except Exception:
+            pass
         texts, labels = [], []
         for c in s["chunks"]:
             t, lab = _gd.chunk_text(full_wav, c["start_ms"] / 1000, c["end_ms"] / 1000)
@@ -564,6 +576,8 @@ def _warm_maps(sid: str):
             labels.append(lab or "1")
         SESSIONS[sid]["batch_labels"] = labels
         try:
+            from services.dub_worker.voices import translate_batch
+
             SESSIONS[sid]["batch_tts"] = translate_batch(texts, s["source_lang"], s["target_lang"])
         except Exception:
             pass

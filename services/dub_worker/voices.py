@@ -153,21 +153,24 @@ def _gemini_client():
     return _GT_CLIENT
 
 
+# House tone: informal like friends talking, but always respectful.
+# (Respectful forms, never rude/crude; no Shuddh/bookish words.)
+TONE_EN = ("simple everyday spoken English, plain words, like a friend talking, "
+           "polite and respectful in tone")
+TONE_HI = ("simple everyday spoken Hindi in DEVANAGARI script only (no Roman letters), "
+           "like friends talking — informal but respectful (respectful forms, never rude or crude). "
+           "Avoid heavy Shuddh Hindi or bookish words")
+
+
 def _translate_one(client, text: str, source_lang: str, target_lang: str) -> str:
     if source_lang == "hi":
-        task = (
-            "Translate this Hindi into simple everyday spoken English, plain words. "
-            "Keep roughly the SAME NUMBER OF WORDS as the original. "
-            "Output ONLY the English translation, nothing else:\n\n" + text
-        )
+        task = (f"Translate this Hindi into {TONE_EN}. "
+                "Keep roughly the SAME NUMBER OF WORDS as the original. "
+                "Output ONLY the English translation, nothing else:\n\n" + text)
     else:
-        task = (
-            "Translate this English into simple everyday spoken Hindi in DEVANAGARI script only "
-            "(no Roman letters). Use bolt-chaal Hindi like friends talking. "
-            "Avoid heavy Shuddh Hindi or bookish words. "
-            "Keep roughly the SAME NUMBER OF WORDS as the original English. "
-            "Output ONLY the Hindi translation, nothing else:\n\n" + text
-        )
+        task = (f"Translate this English into {TONE_HI}. "
+                "Keep roughly the SAME NUMBER OF WORDS as the original English. "
+                "Output ONLY the Hindi translation, nothing else:\n\n" + text)
     r = client.models.generate_content(
         model="gemini-3.5-flash-lite",
         contents=task,
@@ -213,14 +216,13 @@ def translate_batch(texts: list, source_lang: str, target_lang: str) -> list:
     numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
     if source_lang == "hi":
         task = (
-            "Translate each numbered line into simple everyday spoken English, plain words. "
+            f"Translate each numbered line into {TONE_EN}. "
             "Keep roughly the SAME NUMBER OF WORDS as the original. "
             "Reply with the same numbers, one translation per line, nothing else:\n\n" + numbered
         )
     else:
         task = (
-            "Translate each numbered line into simple everyday spoken Hindi in DEVANAGARI script only "
-            "(no Roman letters), bolt-chaal style, no Shuddh Hindi. "
+            f"Translate each numbered line into {TONE_HI}. "
             "Keep roughly the SAME NUMBER OF WORDS as the original. "
             "Reply with the same numbers, one translation per line, nothing else:\n\n" + numbered
         )

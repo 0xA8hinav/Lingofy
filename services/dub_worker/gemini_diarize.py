@@ -314,6 +314,15 @@ def _off(w, attr: str) -> float:
         return 0.0
 
 
+def _norm_spk(raw) -> str:
+    """Normalize any speaker tag (spk:0, 0, '2', 2) to 1-based '1'..'8'."""
+    digs = "".join(ch for ch in str(raw or "") if ch.isdigit())
+    n = int(digs) if digs else 1
+    if str(raw or "").startswith("spk:"):
+        n += 1
+    return str(min(max(n, 1), 8))
+
+
 def chunk_text(audio_path: str, start_s: float, end_s: float):
     """Slice cached transcript words for [start, end] -> (text, speaker)."""
     p = _tkey(audio_path)
@@ -326,15 +335,145 @@ def chunk_text(audio_path: str, start_s: float, end_s: float):
     text = " ".join(w["word"] for w in use).strip()
     votes: dict = {}
     for w in use:
-        raw = str(w.get("speaker", ""))
-        digs = "".join(ch for ch in raw if ch.isdigit())
-        n = int(digs) if digs else 1
-        if raw.startswith("spk:"):
-            n += 1
-        lab = str(min(max(n, 1), 6))
+        lab = _norm_spk(w.get("speaker", ""))
         votes[lab] = votes.get(lab, 0) + (w["end"] - w["start"])
     speaker = max(votes, key=votes.get)
     return text, speaker
+
+
+def _group_sentences(words: list) -> list:
+    """Group cached words into sentences: speaker change, long pause, or end punctuation."""
+    segs, cur = [], None
+    for w in words:
+        txt = w.get("word", "")
+        if cur and (w.get("speaker") != cur["speaker"] or w["start"] - cur["end"] > 0.8 or cur["text"].rstrip().endswith((".", "?", "!", "।"))):
+            segs.append(cur)
+            cur = None
+        if cur is None:
+            cur = {"text": txt, "start": w["start"], "end": w["end"], "speaker": w.get("speaker", "1")}
+        else:
+            cur["text"] += " " + txt
+            cur["end"] = w["end"]
+    if cur:
+        segs.append(cur)
+    return [s for s in segs if s["text"].strip()]
+
+
+def translated_segs_path(audio_path: str, target_lang: str) -> Path:
+    import hashlib
+
+    if Path(audio_path).exists():
+        with open(audio_path, "rb") as _f:
+            digest = hashlib.sha1(_f.read()).hexdigest()
+    else:
+        digest = hashlib.sha1(audio_path.encode()).hexdigest()
+    return TCACHE / f"{digest}.{target_lang}.segs.json"
+
+
+def translate_segments(audio_path: str, source_lang: str, target_lang: str) -> list:
+    """Translate the transcript as timestamped SENTENCES in a few batched calls.
+
+    Returns [{text, start, end, speaker}] in the TARGET language with the
+    original timings intact. Cached on disk; replays cost zero.
+    """
+    from services.dub_worker.voices import TONE_EN, TONE_HI
+
+    style = TONE_EN if target_lang == "en" else TONE_HI
+    dst = translated_segs_path(audio_path, target_lang)
+    if dst.exists():
+        try:
+            cached = json.loads(dst.read_text())
+            if cached:
+                return cached
+        except Exception:
+            pass
+    src = _tkey(audio_path)
+    if not src.exists():
+        return []
+    words = json.loads(src.read_text())
+    sentences = _group_sentences(words)
+    if not sentences:
+        return []
+    out = []
+    for off in range(0, len(sentences), 40):
+        blk = sentences[off:off + 40]
+        for _s in blk:
+            _s["speaker"] = _norm_spk(_s.get("speaker"))
+        lines = "\n".join(
+            f"{i + 1}. [{s['start']:.2f}-{s['end']:.2f}|{s['speaker']}] {s['text']}"
+            for i, s in enumerate(blk))
+        task = (
+            f"Translate each numbered sentence into {style} "
+            "Keep roughly the SAME NUMBER OF WORDS as the original. "
+            "Reply with a JSON array ONLY, no other text, in this exact shape:\n"
+            '[{"i": 1, "text": "translation", "start": 0.0, "end": 8.0, "speaker": "1"}, ...]\n'
+            "Keep every start/end/speaker EXACTLY as given, translate ONLY the text. "
+            "Cover every line:\n\n" + lines
+        )
+        got = None
+        for key in _ordered_keys():
+            try:
+                from google import genai
+
+                client = genai.Client(api_key=key)
+                r = client.models.generate_content(
+                    model="gemini-3.5-flash-lite",
+                    contents=task,
+                    config={"max_output_tokens": 9000, "response_mime_type": "application/json"},
+                )
+                txt = (r.text or "").strip().strip("`")
+                if txt.lower().startswith("json"):
+                    txt = txt[4:].strip()
+                arr = json.loads(txt)
+                if isinstance(arr, list) and arr:
+                    got = arr
+                    break
+            except Exception:
+                time.sleep(0.5)
+                continue
+        if not got:
+            return out
+        for item in got:
+            try:
+                idx = int(item.get("i", 0)) - 1
+                base = blk[idx] if 0 <= idx < len(blk) else blk[0]
+            except Exception:
+                base = blk[0]
+            text = str(item.get("text", "") or base["text"]).strip()
+            try:
+                s, e = float(item.get("start", base["start"])), float(item.get("end", base["end"]))
+            except Exception:
+                s, e = base["start"], base["end"]
+            spk = _norm_spk(item.get("speaker", base["speaker"]) or base["speaker"])
+            out.append({"text": text, "start": s, "end": e, "speaker": spk})
+    if out:
+        try:
+            TCACHE.mkdir(parents=True, exist_ok=True)
+            translated_segs_path(audio_path, target_lang).write_text(json.dumps(out))
+        except Exception:
+            pass
+    return out
+
+
+def chunk_translated(audio_path: str, target_lang: str, start_s: float, end_s: float):
+    """Slice the cached TRANSLATED segments for [start, end] -> (text, speaker)."""
+    p = translated_segs_path(audio_path, target_lang)
+    if not p.exists():
+        return "", ""
+    try:
+        segs = json.loads(p.read_text())
+    except Exception:
+        return "", ""
+    use = [s for s in segs if s["end"] > start_s and s["start"] < end_s]
+    if not use:
+        return "", ""
+    text = " ".join(s["text"] for s in use).strip()
+    votes: dict = {}
+    for s in use:
+        lab = _norm_spk(s.get("speaker", "1"))
+        votes[lab] = votes.get(lab, 0) + (s["end"] - s["start"])
+    return text, max(votes, key=votes.get)
+
 
 
 def _words_to_segments(words: list) -> list:
@@ -342,12 +481,7 @@ def _words_to_segments(words: list) -> list:
     order: dict = {}
     segs, cur = [], None
     for w in words:
-        raw = str(getattr(w, "speaker", "") or "")
-        digs = "".join(ch for ch in raw if ch.isdigit())
-        n = int(digs) if digs else 1
-        if raw.startswith("spk:"):
-            n += 1  # spk:0-based -> 1-based
-        lab = str(min(max(n, 1), 8))
+        lab = _norm_spk(getattr(w, "speaker", ""))
         if lab not in order:
             order[lab] = str(len(order) + 1)
         lab = order[lab]
@@ -395,9 +529,7 @@ def _diarize_json_prompt(audio_path: str, total_s: float, _cause: Exception) -> 
             segs = json.loads(text)
             out = []
             for s in segs:
-                spk = str(s.get("speaker", "SPEAKER_1"))
-                n = "".join(ch for ch in spk if ch.isdigit()) or "1"
-                out.append({"start": float(s["start"]), "end": float(s["end"]), "speaker": str(min(max(int(n), 1), 6))})
+                out.append({"start": float(s["start"]), "end": float(s["end"]), "speaker": _norm_spk(s.get("speaker", "SPEAKER_1"))})
             segs = sorted(out, key=lambda x: x["start"])
             # 3.5-lite finds boundaries but often returns one label: identity via local ECAPA
             if len(segs) > 1 and len({s["speaker"] for s in segs}) == 1:
