@@ -1,12 +1,12 @@
-"""8s chunker: wav-native split, ffmpeg path for video when available."""
+"""20s chunker: wav-native split, ffmpeg path for video when available."""
 
 import shutil
 import subprocess
 import wave
 from pathlib import Path
 
-CHUNK_MS = 8000
-MAX_MS = 9500
+CHUNK_MS = 20000
+MAX_MS = 21000
 
 
 def _split_wav(wav_path: str, out_dir: str, session_id: str) -> list[dict]:

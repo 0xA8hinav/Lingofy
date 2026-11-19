@@ -96,7 +96,7 @@ async function uploadOriginal(){
   let u;try{u=await (await fetch('/v1/sessions/'+sid+'/video',{method:'POST',body:fd})).json();}
   catch(e){showErr('Upload failed: '+e);return;}
   if(u.error||!u.chunks_total){showErr('Upload rejected: '+(u.error||'unknown file'));return;}
-  total=u.chunks_total;totalS=u.total_s||total*8;
+  total=u.chunks_total;totalS=u.total_s||total*20;
   if(u.orig_url){const v0=document.getElementById('v');v0.src=u.orig_url;origUrl=u.orig_url;}
   $('st').textContent='original ready — press Dub for the Hindi version, or just press play';
   $('go').disabled=false;setPill('ready','');
