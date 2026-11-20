@@ -1,3 +1,5 @@
+import pytest
+
 from services.dub_worker.diarize import classify_gender, gender_for_wav
 from services.dub_worker.voices import voice_for
 
@@ -10,6 +12,8 @@ def test_gender_splits_male_female():
 
 
 def test_gender_nn_both_voices():
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
     from services.dub_worker.diarize import classify_gender_nn
 
     assert classify_gender_nn("tests/fixtures/voices/female_hi.wav") == "female"

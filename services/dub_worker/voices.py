@@ -404,7 +404,9 @@ def synthesize(
     sarvam_voice = sarvam_voice_for(speaker_label, target_lang, gender, gindex)
     provider_used = "piper"
     sarvam_err = None
-    for attempt in range(3):
+    # No keys configured (CI/offline): fail fast, no pointless backoff.
+    attempts = 3 if sarvam_keys() else 1
+    for attempt in range(attempts):
         try:
             info = sarvam_tts(text, target_lang, sarvam_voice, wav)
             provider_used = "sarvam"

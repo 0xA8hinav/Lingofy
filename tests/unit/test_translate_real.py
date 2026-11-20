@@ -1,4 +1,8 @@
+import pytest
+
 from services.dub_worker.voices import translate
+
+pytest.importorskip("argostranslate")
 
 
 def _is_devanagari(s: str) -> bool:
