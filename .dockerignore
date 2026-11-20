@@ -9,6 +9,7 @@ venv/
 data/
 output/
 samples/*.mp4
+!samples/bo-mitra.mp4
 !samples/*.md
 .pytest_cache/
 .playwright-mcp/
