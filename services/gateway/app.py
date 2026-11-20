@@ -164,15 +164,34 @@ def _run_dub(sid: str):
                 except Exception:
                     continue
             jobs.append((c, text, label or "1"))
-        # phase 2: ONE batched translation call for all chunks (was: 1 call/chunk)
+        # phase 2: ONE batched translation call for all chunks (was: 1 call/chunk).
+        # Disk-cached by content hash: the demo sample pre-fills this, so stage
+        # time spends zero Gemini calls (rate-limit bottleneck) — only Sarvam live.
         from services.dub_worker.voices import translate as _translate_one
 
         _mark(f"phase1 done ({len(jobs)} jobs)")
-        try:
-            tts = translate_batch([t for _, t, _ in jobs], s["source_lang"], s["target_lang"])
-        except Exception:
-            tts = [""] * len(jobs)
-        _mark("translate_batch done")
+        import hashlib as _hl
+
+        _tkey = _hl.sha1("\n".join(f"{s['source_lang']}>{s['target_lang']}:{t}" for _, t, _ in jobs).encode()).hexdigest()
+        _tfile = Path("data") / "transcripts" / f"batch_{_tkey}.json"
+        tts = None
+        if _tfile.exists():
+            try:
+                tts = json.loads(_tfile.read_text())
+                _mark("translate_batch cache HIT")
+            except Exception:
+                tts = None
+        if not tts:
+            try:
+                tts = translate_batch([t for _, t, _ in jobs], s["source_lang"], s["target_lang"])
+            except Exception:
+                tts = [""] * len(jobs)
+            try:
+                _tfile.parent.mkdir(parents=True, exist_ok=True)
+                _tfile.write_text(json.dumps(tts))
+            except Exception:
+                pass
+            _mark("translate_batch done")
         paired = []
         for (c, t, lab), tt in zip(jobs, tts):
             if not tt:
