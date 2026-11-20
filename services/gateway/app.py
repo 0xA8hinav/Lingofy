@@ -160,6 +160,10 @@ def _run_dub(sid: str):
 
                     r = _tx(c["wav_path"], s["source_lang"])
                     text = r["text"]
+                    # Never voice the mock fallback (offline model missing):
+                    # silence is better than narrating filenames on stage.
+                    if text.startswith("mock transcript"):
+                        continue
                     label = label or r.get("speaker_label") or "1"
                 except Exception:
                     continue
