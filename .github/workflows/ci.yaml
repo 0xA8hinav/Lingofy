@@ -36,7 +36,7 @@ jobs:
           docker build -f services/assembler/Dockerfile -t lingofy-assembler:${{ github.sha }} .
           docker build -f services/dub-worker/Dockerfile -t lingofy-full:${{ github.sha }} .
       - name: Trivy scan (blocks CRITICAL; HIGH reported)
-        uses: aquasecurity/trivy-action@0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: lingofy-assembler:${{ github.sha }}
           format: table
