@@ -61,7 +61,8 @@ footer{color:#525b7a;font-size:12px;text-align:center;margin-top:26px}
 <div class="card">
 <div class="drop" id="drop"><input type="file" id="f" accept="video/*,audio/*"><div id="fname">Drop a video here, or click to browse<br><small>mp4 / mov / webm / mkv — trimmed ≤500MB works best</small></div></div>
 <div class="row"><div class="seg" id="dirseg"><button data-d="en-hi" class="on">EN → HI</button><button data-d="hi-en">HI → EN</button></div>
-<button class="btn" id="go" disabled>Dub it</button></div>
+<button class="btn" id="go" disabled>Dub it</button>
+<button class="btn" id="sample" style="background:linear-gradient(135deg,#38e1c6,#2aa88f)" title="Load the built-in 2-min demo clip, no upload needed">Bo-Mitra 🎬</button></div>
 <div class="bar"><div id="fill"></div></div>
 <div id="st" style="margin-top:8px;color:var(--mut);font-size:14px">Pick a file to begin.</div>
 <div class="speaker"><div class="dot" id="dot"></div><div id="spk">—</div></div>
@@ -83,6 +84,18 @@ $('f').onchange=filePicked;
 function filePicked(){const f=$('f').files[0];if(!f)return;$('fname').innerHTML='<b>'+f.name+'</b> · '+(f.size/1048576).toFixed(1)+' MB';step(0);uploadOriginal();}
 document.querySelectorAll('#dirseg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#dirseg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');wantLang=b.dataset.d.split('-')[1];});
 $('go').onclick=go;
+$('sample').onclick=async()=>{
+  const b=$('sample');b.disabled=true;b.textContent='Loading…';
+  try{
+    const r=await fetch('/samples/bo-mitra.mp4');
+    if(!r.ok)throw new Error('sample not on server (HTTP '+r.status+')');
+    const blob=await r.blob();
+    const dt=new DataTransfer();
+    dt.items.add(new File([blob],'bo-mitra.mp4',{type:'video/mp4'}));
+    $('f').files=dt.files;filePicked();
+  }catch(e){showErr('Sample failed: '+e.message);}
+  b.disabled=false;b.textContent='Bo-Mitra 🎬';
+};
 async function uploadOriginal(){
   // upload immediately on file select so the original plays without Dub
   const dir=document.querySelector('#dirseg button.on').dataset.d.split('-');

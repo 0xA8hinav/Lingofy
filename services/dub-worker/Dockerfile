@@ -13,6 +13,8 @@ COPY services/gateway/requirements.txt /tmp/requirements-gw.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt -r /tmp/requirements-gw.txt
 # Pre-bake Piper voices so the image dubs with $0 and no runtime download.
 COPY assets/voices/ /app/assets/voices/
+# Demo sample video (one-click in the UI, no upload needed on stage).
+COPY samples/bo-mitra.mp4 /app/samples/bo-mitra.mp4
 COPY services/ /app/services/
 COPY scripts/ /app/scripts/
 # Gemma/Argos packages download on first use into the image layer cache dir.

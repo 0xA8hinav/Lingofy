@@ -16,6 +16,9 @@ AUDIO = DATA / "audio"
 OUTPUT = Path("output")
 OUTPUT.mkdir(exist_ok=True)
 app.mount("/output", StaticFiles(directory=str(OUTPUT)), name="output")
+SAMPLES = Path("/app/samples")
+if SAMPLES.exists():
+    app.mount("/samples", StaticFiles(directory=str(SAMPLES)), name="samples")
 
 
 @app.get("/metrics", response_class=HTMLResponse)
