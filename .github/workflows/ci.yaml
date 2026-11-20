@@ -50,9 +50,10 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]') # ghcr requires lowercase
           for img in lingofy-assembler lingofy-full; do
-            docker tag $img:${{ github.sha }} ${{ env.REGISTRY }}/${{ github.repository_owner }}/$img:${{ github.sha }}
-            docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/$img:${{ github.sha }}
+            docker tag $img:${{ github.sha }} ${{ env.REGISTRY }}/$OWNER/$img:${{ github.sha }}
+            docker push ${{ env.REGISTRY }}/$OWNER/$img:${{ github.sha }}
           done
 
   helm-template:
