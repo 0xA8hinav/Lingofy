@@ -1,0 +1,32 @@
+name: deploy-aws
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/**"
+      - "scripts/**"
+      - "deploy/**"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to EC2 over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/Lingofy
+            git pull --ff-only
+            docker compose -f deploy/dev/docker-compose.yml -f deploy/dev/docker-compose.aws.yml up --build -d
+            for i in $(seq 1 20); do
+              if curl -sf -m 5 http://localhost:8080/healthz; do echo HEALTHY; exit 0; fi
+              sleep 15
+            done
+            echo "gateway never became healthy" >&2
+            docker logs dev-gateway-1 --tail 50 >&2 || true
+            exit 1
