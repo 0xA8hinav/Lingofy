@@ -6,6 +6,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  LINGOFY_OFFLINE: "1"
 
 jobs:
   lint-test:

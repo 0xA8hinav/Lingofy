@@ -96,6 +96,14 @@ def sarvam_key() -> str | None:
     return k
 
 
+def _offline() -> bool:
+    """Offline test mode: never touch paid APIs (Sarvam/Gemini), even if keys
+    happen to be present in the environment. Set LINGOFY_OFFLINE=1 in CI."""
+    import os
+
+    return os.getenv("LINGOFY_OFFLINE") == "1"
+
+
 def sarvam_tts(text: str, lang: str, voice: str, out_wav: str, pace: float = 1.0) -> dict:
     """Sarvam Bulbul v4-flash TTS -> 22050 Hz mono wav. Raises on failure (caller falls back).
 
@@ -107,6 +115,8 @@ def sarvam_tts(text: str, lang: str, voice: str, out_wav: str, pace: float = 1.0
     import urllib.error
     import urllib.request
 
+    if _offline():
+        raise RuntimeError("offline test mode: sarvam disabled")
     keys = sarvam_keys()
     if not keys:
         raise RuntimeError("no sarvam key")
@@ -156,7 +166,6 @@ def sarvam_tts(text: str, lang: str, voice: str, out_wav: str, pace: float = 1.0
             continue
     raise RuntimeError(f"sarvam tts failed on all keys: {last}")
 
-
 # Natural speaking rate per language at length-scale 1.0 (measured, chars/sec).
 # We ALWAYS synthesize at natural rate (scale 1.0). Duration fit is done by
 # padding trailing silence when short, or a mild speedup (max ~1.1, barely
@@ -181,7 +190,7 @@ def cost_cents(chars: int, provider: str) -> float:
 
 
 def translate(text: str, source_lang: str, target_lang: str) -> dict:
-    if (source_lang, target_lang) in (("en", "hi"), ("hi", "en")):
+    if not _offline() and (source_lang, target_lang) in (("en", "hi"), ("hi", "en")):
         try:
             out = _translate_gemini(text, source_lang, target_lang)
             if out:
@@ -275,7 +284,10 @@ def translate_batch(texts: list, source_lang: str, target_lang: str) -> list:
     """Translate ALL chunk texts in ONE Gemini call (numbered list in/out).
 
     Returns a list aligned with the input; blanks where the model skipped.
+    Offline test mode returns blanks (callers fall back to passthrough).
     """
+    if _offline():
+        return [""] * len(texts)
     numbered = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(texts))
     if source_lang == "hi":
         task = (
