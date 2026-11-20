@@ -402,17 +402,29 @@ def synthesize(
 
     provider_used = "piper"
     sarvam_voice = sarvam_voice_for(speaker_label, target_lang, gender, gindex)
-    try:
-        info = sarvam_tts(text, target_lang, sarvam_voice, wav)
-        provider_used = "sarvam"
+    provider_used = "piper"
+    sarvam_err = None
+    for attempt in range(3):
         try:
-            from services.dub_worker import costs as _costs
+            info = sarvam_tts(text, target_lang, sarvam_voice, wav)
+            provider_used = "sarvam"
+            try:
+                from services.dub_worker import costs as _costs
 
-            _costs.record("sarvam", 0, f"{info.get('chars', 0)} chars")
-        except Exception:
-            pass
-    except Exception:
-        provider_used = "piper"
+                _costs.record("sarvam", 0, f"{info.get('chars', 0)} chars")
+            except Exception:
+                pass
+            break
+        except Exception as e:
+            sarvam_err = e
+            if attempt < 2:
+                import time as _time
+
+                _time.sleep(5 * (attempt + 1))  # transient 429/5xx: back off, same voice
+    if provider_used != "sarvam":
+        # VISIBLE fallback: a Piper chunk among Sarvam chunks sounds like a
+        # different person. Log it so the server log shows exactly which chunk.
+        print(f"[tts] {base}: sarvam failed ({str(sarvam_err)[:120]}), piper fallback", flush=True)
     if provider_used == "piper" and not Path(wav).exists():
         if not Path(model).exists():
             raise FileNotFoundError(model)
