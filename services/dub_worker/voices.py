@@ -35,7 +35,12 @@ GENDER_VOICES = {
 # Deterministic per (speaker, gender, index) so voices stay stable across chunks.
 SARVAM_VOICES = {
     "male": {
-        "hi": ["kabir_hi_conversational", "amit_hi_conversational", "manan_hi_conversational", "sumit_hi_conversational"],
+        "hi": [
+            "kabir_hi_conversational",
+            "amit_hi_conversational",
+            "manan_hi_conversational",
+            "sumit_hi_conversational",
+        ],
         "en": ["shubh_en_narration", "rohan_en_recovery", "varun_en_ads", "dev_en_conversational"],
     },
     "female": {
@@ -121,18 +126,20 @@ def sarvam_tts(text: str, lang: str, voice: str, out_wav: str, pace: float = 1.0
     if not keys:
         raise RuntimeError("no sarvam key")
     lang_code = "hi-IN" if str(lang).lower().startswith("hi") else "en-IN"
-    body = _js.dumps({
-        "text": text,
-        "target_language_code": lang_code,
-        "speaker": voice,
-        "model": "bulbul:v4-flash",
-        "pace": min(2.0, max(0.5, pace)),
-        "speech_sample_rate": 22050,
-        "output_audio_codec": "wav",
-        # Low temperature: same persona must sound like the SAME person
-        # across chunks. Default 0.6 wanders in energy/intonation per call.
-        "temperature": 0.2,
-    }).encode()
+    body = _js.dumps(
+        {
+            "text": text,
+            "target_language_code": lang_code,
+            "speaker": voice,
+            "model": "bulbul:v4-flash",
+            "pace": min(2.0, max(0.5, pace)),
+            "speech_sample_rate": 22050,
+            "output_audio_codec": "wav",
+            # Low temperature: same persona must sound like the SAME person
+            # across chunks. Default 0.6 wanders in energy/intonation per call.
+            "temperature": 0.2,
+        }
+    ).encode()
     last = None
     for key in keys:
         try:
@@ -165,6 +172,7 @@ def sarvam_tts(text: str, lang: str, voice: str, out_wav: str, pace: float = 1.0
             last = e
             continue
     raise RuntimeError(f"sarvam tts failed on all keys: {last}")
+
 
 # Natural speaking rate per language at length-scale 1.0 (measured, chars/sec).
 # We ALWAYS synthesize at natural rate (scale 1.0). Duration fit is done by

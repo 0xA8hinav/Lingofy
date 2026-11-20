@@ -176,7 +176,9 @@ def _run_dub(sid: str):
         _mark(f"phase1 done ({len(jobs)} jobs)")
         import hashlib as _hl
 
-        _tkey = _hl.sha1("\n".join(f"{s['source_lang']}>{s['target_lang']}:{t}" for _, t, _ in jobs).encode()).hexdigest()
+        _tkey = _hl.sha1(
+            "\n".join(f"{s['source_lang']}>{s['target_lang']}:{t}" for _, t, _ in jobs).encode()
+        ).hexdigest()
         _tfile = Path("data") / "transcripts" / f"batch_{_tkey}.json"
         tts = None
         if _tfile.exists():
