@@ -16,8 +16,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install ruff pytest httpx fastapi starlette python-multipart piper-tts
-      - name: Install espeak (piper phonemizer)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng
+      - name: Install espeak + ffmpeg (piper phonemizer, audio fit)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng ffmpeg
       - run: ruff check services/ scripts/ tests/
       - run: ruff format --check services/ scripts/ tests/ || true
       - run: pytest -q
